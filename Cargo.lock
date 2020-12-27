@@ -900,6 +900,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_with",
  "shakmaty",
  "thiserror",
  "tokio 0.2.24",
@@ -1913,7 +1914,9 @@ version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15f6201e064705553ece353a736a64be975680bd244908cf63e8fa71e478a51a"
 dependencies = [
+ "chrono",
  "serde",
+ "serde_json",
  "serde_with_macros",
 ]
 

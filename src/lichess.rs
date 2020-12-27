@@ -40,8 +40,8 @@ pub mod api {
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Eval {
-        pub cp: Option<u64>,
-        pub mate: Option<u64>,
+        pub cp: Option<i64>,
+        pub mate: Option<i64>,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]

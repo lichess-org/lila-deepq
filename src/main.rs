@@ -20,12 +20,12 @@ mod lichess;
 mod deepq;
 mod db;
 mod error;
-mod chessio;
 
 extern crate dotenv;
 extern crate futures;
 extern crate serde_json;
 extern crate pretty_env_logger;
+extern crate serde_with;
 #[macro_use] extern crate log;
 
 use dotenv::dotenv;

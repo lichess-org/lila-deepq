@@ -75,7 +75,8 @@ pub mod filters {
         Rejection,
         reply::{self, Json, Reply, WithStatus},
     };
-    use crate::chessio::Fen;
+    use serde_with::{serde_as, DisplayFromStr};
+    use shakmaty::fen::Fen;
     use crate::error::Error;
     use crate::db::DbConn;
     use crate::fishnet::api;
@@ -126,10 +127,12 @@ pub mod filters {
         nodes: Nodes
     }
 
+    #[serde_as]
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Job {
         work: WorkInfo,
         game_id: String,
+        #[serde_as(as = "DisplayFromStr")]
         position: Fen,
         variant: Variant,
         // TODO: make this a real type as well
@@ -148,7 +151,7 @@ pub mod filters {
 
     // NOTE: This is not a lambda because async lambdas
     //      are unstable.
-    async fn authorize_api_request__impl(
+    async fn authorize_api_request_impl(
         db: DbConn,
         request_info: FishnetRequest
     ) -> Result<api::APIUser, Rejection> {
@@ -161,7 +164,7 @@ pub mod filters {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json())
-            .and_then(authorize_api_request__impl)
+            .and_then(authorize_api_request_impl)
     }
 
     async fn acquire_job(db: DbConn, api_user: api::APIUser) -> Result<Option<Job>, Rejection>  {

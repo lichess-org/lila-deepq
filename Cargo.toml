@@ -23,3 +23,7 @@ shakmaty = "0.17.0"
 thiserror = "1.0"
 tokio = { version = "0.2", features = ["full"] }
 warp = "0.2"
+
+[dependencies.serde_with]
+version = "1.6.0"
+features = [ "chrono", "json", "macros" ]

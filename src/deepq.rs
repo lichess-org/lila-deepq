@@ -68,7 +68,7 @@ pub mod api {
     pub struct Game {
         id: String,
         emts: Vec<u64>, // TODO: maybe a smaller datatype is more appropriate? u32? u16?
-        pgn: Vec<String>,
+        pgn: String,
         black: Option<String>,
         #[serde(rename = "blackBlurs")]
         black_blurs: Blurs,
