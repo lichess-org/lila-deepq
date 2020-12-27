@@ -52,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let response = client.get(api_url.as_str())
             .header("User-Agent", "Irwin")
             .header("Authorization", format!("Bearer {}", api_key))
-            .body("universe64,samfrommy")
             .send()
             .await?;
         let stream = stream_reader(
