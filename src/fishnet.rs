@@ -16,18 +16,29 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod api {
-    use log::trace;
+    use std::convert::TryFrom;
     use serde::{
         Serialize,
         Deserialize,
     };
-    use mongodb::bson::{self, doc};
+
+    use mongodb::bson::{
+        self,
+        doc,
+        document::{Document as BsonDocument}
+    };
     use crate::error::Error;
     use crate::lichess::api::UserID;
     use crate::db::DbConn;
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Key(pub String);
+
+    impl From<String> for Key {
+        fn from(key: String) -> Self {
+            Key(key)
+        }
+    }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct APIUser {
@@ -36,21 +47,26 @@ pub mod api {
         pub name: String,
     }
 
+    impl TryFrom<BsonDocument> for APIUser {
+        type Error = Error;
+
+        fn try_from(d: BsonDocument) -> Result<Self, Self::Error> {
+            Ok(bson::from_bson::<APIUser>(d.into())?)
+        }
+    }
+
     pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>, Error> {
         let col = db.database.collection("token");
         Ok(
             col.find_one(doc!{"key": key.0.clone()}, None).await?
-                .map(|d| bson::from_bson::<APIUser>(d.into()))
+                .map(APIUser::try_from)
                 .transpose()?
         )
     }
 }
 
 pub mod filters {
-    use serde::{
-        Serialize,
-        Deserialize,
-    };
+    use serde::{Serialize, Deserialize};
     use warp::{
         Filter,
         filters::BoxedFilter,
@@ -60,7 +76,7 @@ pub mod filters {
         reply::{self, Json, Reply, WithStatus},
     };
     use crate::chessio::Fen;
-    use crate::error::{Error, into_rejection};
+    use crate::error::Error;
     use crate::db::DbConn;
     use crate::fishnet::api;
 
@@ -82,8 +98,8 @@ pub mod filters {
     #[derive(Serialize, Deserialize, Debug)]
     pub struct RequestInfo {
         version: String,
-        #[serde(rename = "api_key")]
-        api_key: String
+        #[serde(rename = "apikey")]
+        api_key: api::Key
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -125,29 +141,27 @@ pub mod filters {
 
     async fn get_user_from_key(
         db: DbConn,
-        key: String,
+        key: &api::Key,
     ) -> Result<Option<api::APIUser>, Rejection> {
-        // TODO: I better understand where the desire for code golf comes from.
-        //       surely there is a better way to do this.
-        into_rejection(
-            api::get_api_user(db, &api::Key(key)).await
-        )
+        Ok(api::get_api_user(db, key).await?)
     }
 
-    async fn validate_api_request(
+    // NOTE: This is not a lambda because async lambdas
+    //      are unstable.
+    async fn authorize_api_request__impl(
         db: DbConn,
         request_info: FishnetRequest
     ) -> Result<api::APIUser, Rejection> {
-        get_user_from_key(db, request_info.fishnet.api_key).await?
+        get_user_from_key(db, &request_info.fishnet.api_key).await?
             .ok_or(reject::custom(Error::Unauthorized))
     }
 
     /// extract an APIUser from the json body request
-    fn valid_fishnet_request_filter(db: DbConn) -> impl Filter<Extract = (api::APIUser,), Error = Rejection> + Clone {
+    fn extract_api_user(db: DbConn) -> impl Filter<Extract = (api::APIUser,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json())
-            .and_then(validate_api_request)
+            .and_then(authorize_api_request__impl)
     }
 
     async fn acquire_job(db: DbConn, api_user: api::APIUser) -> Result<Option<Job>, Rejection>  {
@@ -155,7 +169,7 @@ pub mod filters {
     }
 
     async fn check_key_validity(db: DbConn, key: String) -> Result<String, Rejection>  {
-        get_user_from_key(db, key).await?
+        get_user_from_key(db, &key.into()).await?
             .ok_or(reject::not_found())
             .map(|_| String::new())
     }
@@ -168,21 +182,20 @@ pub mod filters {
     }
 
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-        let db2 = db.clone();
-        let db3 = db.clone();
+        let extract_api_user =
+            extract_api_user(db.clone());
         let db = warp::any().map(move || db.clone());
-        let db4 = warp::any().map(move || db3.clone());
 
         let acquire =
             warp::path("acquire")
-                .and(db)
-                .and(valid_fishnet_request_filter(db2.clone()))
+                .and(db.clone())
+                .and(extract_api_user)
                 .and_then(acquire_job)
                 .and_then(json_object_or_no_content::<Job>);
 
         let valid_key = 
             warp::path("key")
-            .and(db4)
+            .and(db.clone())
             .and(warp::path::param())
             .and_then(check_key_validity);
 

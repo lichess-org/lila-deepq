@@ -43,7 +43,8 @@ pub enum Error {
 
 impl reject::Reject for Error {}
 
-
-pub fn into_rejection<T>(result: Result<T, Error>) -> Result<T, reject::Rejection> {
-    result.map_err(|e| reject::custom(e))
+impl From<Error> for reject::Rejection {
+    fn from(e: Error) -> Self {
+        reject::custom(e)
+    }
 }
