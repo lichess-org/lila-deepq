@@ -1,0 +1,25 @@
+[package]
+name = "lila-deepq"
+version = "0.1.0"
+authors = ["Lakin Wecker <lakin@structuredabstraction.com>"]
+edition = "2018"
+default-run = "lila-deepq"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dotenv = "0.15.0"
+futures = "0.3.8"
+log = "0.4"
+mongodb = "1.1"
+pretty_env_logger = "0.3"
+redis-async = "0.8"
+reqwest = { version = "0.10", features = ["json", "stream"] }
+serde = "1.0"
+serde_json = "1.0.60"
+shakmaty = "0.17.0"
+thiserror = "1.0"
+tokio = { version = "0.2", features = ["full"] }
+warp = "0.2"
