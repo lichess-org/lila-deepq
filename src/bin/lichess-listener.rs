@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         info!("Connecting...");
         let response = client.get(api_url.as_str())
-            .header("User-Agent", "Irwin")
+            .header("User-Agent", "lila-deepq")
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await?;
