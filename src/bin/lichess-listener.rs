@@ -46,7 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 b"\n" => info!("Ping received"),
                 v => match serde_json::from_slice::<IrwinRequest>(v) {
                     Ok(request) => {
-                        info!("IrwinRequest -> Username:{} with {} games", request.user.id.0, request.games.len());
+                        info!(
+                            "IrwinRequest -> Username:{} with {} games",
+                            request.user.id.0,
+                            request.games.len()
+                        );
                         add_to_queue(request)
                     },
                     Err(e) => error!("Unexpected message from lichess: {}", e)
