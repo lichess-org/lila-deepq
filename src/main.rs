@@ -15,11 +15,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-mod fishnet;
-mod lichess;
-mod deepq;
 mod db;
+mod deepq;
 mod error;
+mod fishnet;
+mod irwin;
+mod lichess;
 
 extern crate dotenv;
 extern crate futures;

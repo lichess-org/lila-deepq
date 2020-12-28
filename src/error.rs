@@ -16,7 +16,8 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 use mongodb::error::{Error as _MongoDBError};
-use mongodb::bson::de::{Error as _BsonError};
+use mongodb::bson::de::{Error as _BsonDeError};
+use mongodb::bson::ser::{Error as _BsonSeError};
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
@@ -27,9 +28,14 @@ use thiserror::Error;
 pub enum Error {
     // #[error("Serde Deserialization Error")]
     // SerdeDeserializationError(#[from] _SerdeDeError),
+    #[error("I am somehow unable to create a record in the database.")]
+    CreateError,
 
     #[error("BSON Error")]
-    BsonError(#[from] _BsonError),
+    BsonSerializationError(#[from] _BsonSeError),
+
+    #[error("BSON Error")]
+    BsonDeserializationError(#[from] _BsonDeError),
 
     #[error("Mongo Database Error")]
     MongoDBError(#[from] _MongoDBError),
@@ -39,6 +45,9 @@ pub enum Error {
 
     #[error("unknown data store error")]
     Unknown,
+
+    #[error("I haven't implemented this yet")]
+    Unimplemented,
 }
 
 impl reject::Reject for Error {}

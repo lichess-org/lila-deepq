@@ -23,12 +23,12 @@ pub mod api {
     };
 
     use mongodb::bson::{
-        self,
         doc,
+        from_document,
         document::{Document as BsonDocument}
     };
     use crate::error::Error;
-    use crate::lichess::api::UserID;
+    use crate::deepq::model::UserId;
     use crate::db::DbConn;
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,23 +43,15 @@ pub mod api {
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct APIUser {
         pub key: Key,
-        pub user: Option<UserID>,
+        pub user: Option<UserId>,
         pub name: String,
-    }
-
-    impl TryFrom<BsonDocument> for APIUser {
-        type Error = Error;
-
-        fn try_from(d: BsonDocument) -> Result<Self, Self::Error> {
-            Ok(bson::from_bson::<APIUser>(d.into())?)
-        }
     }
 
     pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>, Error> {
         let col = db.database.collection("token");
         Ok(
             col.find_one(doc!{"key": key.0.clone()}, None).await?
-                .map(APIUser::try_from)
+                .map(from_document)
                 .transpose()?
         )
     }
@@ -77,6 +69,7 @@ pub mod filters {
     };
     use serde_with::{serde_as, DisplayFromStr};
     use shakmaty::fen::Fen;
+
     use crate::error::Error;
     use crate::db::DbConn;
     use crate::fishnet::api;

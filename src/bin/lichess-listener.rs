@@ -21,17 +21,14 @@ use std::io::{Error, ErrorKind};
 use dotenv::dotenv;
 use futures::StreamExt;
 use log::{info, error};
-use serde::{Serialize, Deserialize};
+use mongodb::Client;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::stream_reader;
 use tokio::time::{delay_for, Duration};
 
-use lila_deepq::lichess::api::{IrwinRequest, add_to_queue};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct KeepAlive {
-    keepAlive: bool
-}
+use lila_deepq::db::DbConn;
+use lila_deepq::irwin::model::{Request, KeepAlive};
+use lila_deepq::irwin::api::{add_to_queue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +42,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_url = env::var("LILA_DEEPQ_IRWIN_STREAM_URL")
         .unwrap_or("https://lichess.org/api/stream/irwin".to_string());
     let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
+
+
+    let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
+    let mongo_client = Client::with_uri_str(&mongo_uri).await?;
+
+    let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
+    let database = mongo_client.database(&database_name);
+    let db = DbConn{client: mongo_client, database: database};
+
     info!("Starting up...");
 
     loop {
@@ -63,17 +69,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(Ok(line)) = lines.next().await {
             match (
                 serde_json::from_str::<KeepAlive>(line.trim().into()),
-                serde_json::from_str::<IrwinRequest>(line.trim().into())
+                serde_json::from_str::<Request>(line.trim().into())
             ) {
-                (Ok(KeepAlive{keepAlive: _}), _) => info!("keepAlive received"),
+                (Ok(KeepAlive{keep_alive: _}), _) => info!("keepAlive received"),
                 (_, Ok(request)) => {
                     info!(
-                        "{} report: {} for {} games",
+                        "{:?} report: {} for {} games",
                         request.origin,
                         request.user.id.0,
                         request.games.len()
                     );
-                    add_to_queue(request)
+                    add_to_queue(db.clone(), request).await?;
                 },
                 (_, Err(e)) => error!("Unexpected message: {:?} from lichess:\n{}", line.trim(), e)
             }
