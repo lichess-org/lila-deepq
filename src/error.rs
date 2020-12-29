@@ -57,3 +57,5 @@ impl From<Error> for reject::Rejection {
         reject::custom(e)
     }
 }
+
+pub type Result<T> = std::result::Result<T, Error>;
