@@ -25,6 +25,7 @@ pub mod model {
         ReportOrigin,
         ReportType,
         CreateReport,
+        CreateGame,
     };
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,6 +44,19 @@ pub mod model {
         pub emts: Option<Vec<u64>>,
         pub pgn: String, // TODO: this should be more strongly typed.
         pub analysis: Option<Vec<Eval>>,
+    }
+
+    impl From<&Game> for CreateGame {
+        fn from(g: &Game) -> CreateGame {
+            let g = g.clone();
+            CreateGame {
+                game_id: g.id,
+                emts: g.emts.unwrap_or(Vec::new()),
+                pgn: g.pgn,
+                black: Some(g.black),
+                white: Some(g.white),
+            }
+        }
     }
 
 
@@ -81,20 +95,11 @@ pub mod api {
 
     use crate::deepq;
 
-
     pub async fn add_to_queue(db: DbConn, request: model::Request) -> Result<(), Error> {
-        let report = deepq::api::create_report(db, request.into()).await?;
-
-        //let irwin_reports = db.database.collection("deepq_reports");
-        //let result = irwin_reports.insert_one(request.into(), None).await?;
+        //request.games.iter()
+            //.map(Into::into)
+            //.try_for_each(async |g| deepq::api::create_game(db, g).await)?;
+        let _report = deepq::api::insert_one_report(db, request.into()).await?;
         Ok(())
-        //irwin_reports.
-        //let game_queue = db.database.collection("deepq_game_queue");
-        /*Ok(
-            col.find_one(doc!{"key": key.0.clone()}, None).await?
-                .map(APIUser::try_from)
-                .transpose()?
-        )*/
-
     }
 }

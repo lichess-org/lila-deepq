@@ -19,8 +19,8 @@ mod db;
 mod deepq;
 mod error;
 mod fishnet;
-mod irwin;
-mod lichess;
+//mod irwin;
+//mod lichess;
 
 extern crate dotenv;
 extern crate futures;

@@ -16,8 +16,6 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod model {
-    use std::convert::TryFrom;
-
     use chrono::prelude::*;
     use derive_more::{From, Display};
     use serde::{Serialize, Deserialize};
@@ -27,8 +25,6 @@ pub mod model {
         Document,
         oid::ObjectId
     };
-
-    use crate::error::Error;
 
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
     pub struct UserId(pub String);
@@ -64,9 +60,9 @@ pub mod model {
 
     pub fn precedence_for_origin(origin: ReportOrigin) -> u64 {
         match origin {
-            Moderator => 1_000_000u64,
-            Tournament => 100u64,
-            Random => 10u64,
+            ReportOrigin::Moderator => 1_000_000u64,
+            ReportOrigin::Tournament => 100u64,
+            ReportOrigin::Random => 10u64,
         }
     }
 
@@ -141,18 +137,41 @@ pub mod model {
         pub mate: Option<i64>,
     }
 
-    // TODO: this should come directly from the lila db, why store this more than once?
     #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct GameCache {
+    pub struct CreateGame {
         pub game_id: GameId,
         pub emts: Vec<u64>, // TODO: maybe a smaller datatype is more appropriate? u32? u16?
         pub pgn: String,
-        pub black: Option<String>,
-        #[serde(rename = "blackBlurs")]
-        pub black_blurs: Blurs,
-        pub white: Option<String>,
-        #[serde(rename = "whiteBlurs")]
-        pub white_blurs: Blurs,
+        pub black: Option<UserId>,
+        pub white: Option<UserId>,
+    }
+
+    impl From<CreateGame> for Document {
+        fn from(g: CreateGame) -> Document {
+            let mut document = doc! {
+                "game_id": g.game_id,
+                "emts": g.emts,
+                "pgn": g.pgn,
+            };
+            if let Some(black) = g.black {
+                document.insert("black", black);
+            }
+            if let Some(white) = g.white {
+                document.insert("white", white);
+            }
+            document
+        }
+    }
+
+    // TODO: this should come directly from the lila db, why store this more than once?
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct Game {
+        pub _id: ObjectId,
+        pub game_id: GameId,
+        pub emts: Vec<u64>, // TODO: maybe a smaller datatype is more appropriate? u32? u16?
+        pub pgn: String,
+        pub black: Option<UserId>,
+        pub white: Option<UserId>,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -166,23 +185,64 @@ pub mod model {
 }
 
 pub mod api {
-    use mongodb::bson::{
-        doc,
-        de::from_document
-
+    use serde::de::DeserializeOwned;
+    use mongodb::{
+        bson::{
+            doc,
+            de::from_document,
+            Document
+        },
+        Collection
     };
+    use tokio::stream::{self as tokio_stream, Stream};
+    use futures::stream::{self, StreamExt};
 
     use crate::db::DbConn;
     use crate::error::Error;
     use crate::deepq::model;
 
-    pub async fn create_report(db :DbConn, report: model::CreateReport) -> Result<model::Report, Error> {
-        let reports = db.database.collection("deepq_reports");
-        let result = reports.insert_one(report.into(), None).await?;
-        reports.find_one(doc!{ "_id": result.inserted_id }, None).await?
-            .map(from_document)
+    pub async fn insert_one<CT, T>(coll :Collection, c: CT) -> Result<T, Error>
+        where
+            CT: DeserializeOwned + Into<Document>,
+            T: DeserializeOwned
+    {
+        let result = coll.insert_one(c.into(), None).await?;
+        coll.find_one(doc!{ "_id": result.inserted_id }, None).await?
+            .map(from_document::<T>)
             .transpose()?
             .ok_or(Error::CreateError)
+    }
+
+    pub async fn upsert_one<CT, T>(coll :Collection, query: Document, c: CT) -> Result<T, Error>
+        where
+            CT: DeserializeOwned + Into<Document>,
+            T: DeserializeOwned
+    {
+        let result = coll.update_one(query.clone(), c.into(), None).await?;
+        coll.find_one(query, None).await?
+            .map(from_document::<T>)
+            .transpose()?
+            .ok_or(Error::CreateError)
+    }
+
+    pub async fn insert_one_game(db :DbConn, game: model::CreateGame) -> Result<model::Game, Error> {
+        // TODO: because games are unique on their game id, we have to do an upsert
+        let games_coll = db.database.collection("deepq_games");
+        Ok(upsert_one(games_coll, doc!{ "game_id": game.game_id.to_string() }, game).await?)
+    }
+
+    pub async fn insert_many_games(db :DbConn, games: Vec<model::CreateGame>)
+        -> Vec<Result<model::Game, Error>>
+    {
+        tokio_stream::iter(games)
+            .map(move |game| return async { insert_one_game(db.clone(), game).await })
+            .collect::<Vec<Result<model::Game, Error>>>().await
+    }
+
+
+    pub async fn insert_one_report(db :DbConn, report: model::CreateReport) -> Result<model::Report, Error> {
+        let reports_coll = db.database.collection("deepq_reports");
+        Ok(insert_one(reports_coll, report).await?)
     }
 
 }
