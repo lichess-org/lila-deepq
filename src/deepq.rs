@@ -90,7 +90,7 @@ pub mod model {
     impl From<CreateReport> for Document {
         fn from(report: CreateReport) -> Document {
             doc! {
-                "user_id": report.user_id.0,
+                "user_id": report.user_id,
                 "origin": report.origin,
                 "report_type": report.report_type,
                 "games": report.games,
