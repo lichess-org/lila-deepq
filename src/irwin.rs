@@ -19,13 +19,15 @@ pub mod model {
     use serde::{Serialize, Deserialize};
 
     use crate::deepq::model::{
-        UserId,
-        GameId,
+        AnalysisType,
+        CreateFishnetJob,
+        CreateGame,
+        CreateReport,
         Eval,
+        GameId,
         ReportOrigin,
         ReportType,
-        CreateReport,
-        CreateGame,
+        UserId,
     };
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -59,7 +61,6 @@ pub mod model {
         }
     }
 
-
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Request {
         pub t: String,
@@ -79,6 +80,16 @@ pub mod model {
         }
     }
 
+    impl From<Request> for Vec<CreateFishnetJob> {
+        fn from(request: Request) -> Vec<CreateFishnetJob> {
+            request.games.iter().map(|g| CreateFishnetJob{
+                game_id: g.id.clone(),
+                analysis_type: AnalysisType::Deep,
+                report_origin: Some(request.clone().origin),
+            }).collect()
+        }
+    }
+
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct KeepAlive {
@@ -89,16 +100,23 @@ pub mod model {
 }
 
 pub mod api {
+    use futures::future::join_all;
+
     use crate::db::DbConn;
     use crate::error::{Result};
     use crate::irwin::model;
     use crate::deepq;
 
-    pub async fn add_to_queue(db: DbConn, request: model::Request) -> Result<(), Error> {
-        //request.games.iter()
-            //.map(Into::into)
-            //.try_for_each(async |g| deepq::api::create_game(db, g).await)?;
-        let _report = deepq::api::insert_one_report(db, request.into()).await?;
+    pub async fn add_to_queue(db: DbConn, request: model::Request) -> Result<()> {
+        join_all(
+            deepq::api::insert_many_games(
+                db.clone(),
+                request.games.iter().map(Into::into)
+            )
+        ).await;
+        let fishnet_jobs: Vec<deepq::model::CreateFishnetJob> = request.clone().into();
+        join_all(deepq::api::insert_many_fishnet_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await;
+        deepq::api::insert_one_report(db.clone(), request.into()).await?;
         Ok(())
     }
 }

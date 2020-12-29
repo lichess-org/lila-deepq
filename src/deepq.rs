@@ -123,7 +123,26 @@ pub mod model {
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct FishnetJobQ {
+    pub struct CreateFishnetJob {
+        pub game_id: GameId,
+        pub analysis_type: AnalysisType,
+        pub report_origin: Option<ReportOrigin>,
+    }
+
+    impl From<CreateFishnetJob> for Document {
+        fn from(report: CreateFishnetJob) -> Document {
+            doc! {
+                "game_id": report.game_id,
+                "analysis_type": report.analysis_type,
+                "precedence": report.report_origin.map(precedence_for_origin).unwrap_or(100_u64),
+                "date_last_updated": Utc::now(),
+            }
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct FishnetJob {
+        pub _id: ObjectId,
         pub game_id: GameId,
         pub analysis_type: AnalysisType,
         pub precedence: u64,
@@ -236,18 +255,30 @@ pub mod api {
         Ok(upsert_one(games_coll, doc!{ "game_id": game.game_id.to_string() }, game).await?)
     }
 
-    pub async fn insert_many_games(db :DbConn, games: Vec<model::CreateGame>)
-        -> Vec<Result<model::Game, Error>>
+    pub fn insert_many_games<T>(db: DbConn, games: T)
+        -> impl Iterator<Item=impl Future<Output=Result<model::Game>>>
+        where
+            T: Iterator<Item=model::CreateGame> + Clone
     {
-        tokio_stream::iter(games)
-            .map(move |game| return async { insert_one_game(db.clone(), game).await })
-            .collect::<Vec<Result<model::Game, Error>>>().await
+        games.clone().map(move |game| insert_one_game(db.clone(), game.clone()))
     }
 
-
-    pub async fn insert_one_report(db :DbConn, report: model::CreateReport) -> Result<model::Report, Error> {
+    pub async fn insert_one_report(db: DbConn, report: model::CreateReport) -> Result<model::Report> {
         let reports_coll = db.database.collection("deepq_reports");
         Ok(insert_one(reports_coll, report).await?)
+    }
+
+    pub async fn insert_one_fishnet_job(db: DbConn, job: model::CreateFishnetJob) -> Result<model::FishnetJob> {
+        let fishnet_job_col = db.database.collection("deepq_fishnetjobs");
+        Ok(insert_one(fishnet_job_col, job).await?)
+    }
+
+    pub fn insert_many_fishnet_jobs<'a, T>(db: DbConn, jobs: &'a T)
+        -> impl Iterator<Item=impl Future<Output=Result<model::FishnetJob>>> + 'a
+        where
+            T: Iterator<Item=&'a model::CreateFishnetJob> + Clone
+    {
+        jobs.clone().map(move |job| insert_one_fishnet_job(db.clone(), job.clone()))
     }
 
 }
