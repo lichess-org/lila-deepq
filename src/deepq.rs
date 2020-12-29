@@ -200,14 +200,13 @@ pub mod api {
         },
         Collection
     };
-    use tokio::stream::{self as tokio_stream, Stream};
-    use futures::stream::{self, StreamExt};
+    use futures::future::Future;
 
     use crate::db::DbConn;
-    use crate::error::Error;
+    use crate::error::{Error, Result};
     use crate::deepq::model;
 
-    pub async fn insert_one<CT, T>(coll :Collection, c: CT) -> Result<T, Error>
+    pub async fn insert_one<CT, T>(coll: Collection, c: CT) -> Result<T>
         where
             CT: DeserializeOwned + Into<Document>,
             T: DeserializeOwned
@@ -219,19 +218,19 @@ pub mod api {
             .ok_or(Error::CreateError)
     }
 
-    pub async fn upsert_one<CT, T>(coll :Collection, query: Document, c: CT) -> Result<T, Error>
+    pub async fn upsert_one<CT, T>(coll: Collection, query: Document, c: CT) -> Result<T>
         where
             CT: DeserializeOwned + Into<Document>,
             T: DeserializeOwned
     {
-        let result = coll.update_one(query.clone(), c.into(), None).await?;
+        coll.update_one(query.clone(), c.into(), None).await?;
         coll.find_one(query, None).await?
             .map(from_document::<T>)
             .transpose()?
             .ok_or(Error::CreateError)
     }
 
-    pub async fn insert_one_game(db :DbConn, game: model::CreateGame) -> Result<model::Game, Error> {
+    pub async fn insert_one_game(db: DbConn, game: model::CreateGame) -> Result<model::Game> {
         // TODO: because games are unique on their game id, we have to do an upsert
         let games_coll = db.database.collection("deepq_games");
         Ok(upsert_one(games_coll, doc!{ "game_id": game.game_id.to_string() }, game).await?)

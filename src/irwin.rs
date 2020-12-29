@@ -90,9 +90,8 @@ pub mod model {
 
 pub mod api {
     use crate::db::DbConn;
-    use crate::error::Error;
+    use crate::error::{Result};
     use crate::irwin::model;
-
     use crate::deepq;
 
     pub async fn add_to_queue(db: DbConn, request: model::Request) -> Result<(), Error> {

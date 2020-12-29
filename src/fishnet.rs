@@ -16,7 +16,6 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod api {
-    use std::convert::TryFrom;
     use serde::{
         Serialize,
         Deserialize,
@@ -25,9 +24,8 @@ pub mod api {
     use mongodb::bson::{
         doc,
         from_document,
-        document::{Document as BsonDocument}
     };
-    use crate::error::Error;
+    use crate::error::Result;
     use crate::deepq::model::UserId;
     use crate::db::DbConn;
 
@@ -47,7 +45,7 @@ pub mod api {
         pub name: String,
     }
 
-    pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>, Error> {
+    pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>> {
         let col = db.database.collection("token");
         Ok(
             col.find_one(doc!{"key": key.0.clone()}, None).await?
