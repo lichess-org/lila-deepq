@@ -29,13 +29,15 @@ extern crate pretty_env_logger;
 extern crate serde_with;
 #[macro_use] extern crate log;
 
-use dotenv::dotenv;
 use std::env;
+use std::result::{Result as StdResult};
+
+use dotenv::dotenv;
 use mongodb::Client;
 use crate::db::DbConn;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     pretty_env_logger::init();
 
