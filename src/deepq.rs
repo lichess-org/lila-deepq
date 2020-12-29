@@ -116,6 +116,12 @@ pub mod model {
         Deep,
     }
 
+    impl From<AnalysisType> for Bson {
+        fn from(at: AnalysisType) -> Bson {
+            Bson::String(at.to_string())
+        }
+    }
+
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct FishnetJobQ {
         pub game_id: GameId,
