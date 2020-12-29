@@ -58,6 +58,7 @@ pub mod api {
 }
 
 pub mod filters {
+    use std::result::{Result as StdResult};
     use serde::{Serialize, Deserialize};
     use warp::{
         Filter,
@@ -138,7 +139,7 @@ pub mod filters {
     async fn get_user_from_key(
         db: DbConn,
         key: &api::Key,
-    ) -> Result<Option<api::APIUser>, Rejection> {
+    ) -> StdResult<Option<api::APIUser>, Rejection> {
         Ok(api::get_api_user(db, key).await?)
     }
 
@@ -147,7 +148,7 @@ pub mod filters {
     async fn authorize_api_request_impl(
         db: DbConn,
         request_info: FishnetRequest
-    ) -> Result<api::APIUser, Rejection> {
+    ) -> StdResult<api::APIUser, Rejection> {
         get_user_from_key(db, &request_info.fishnet.api_key).await?
             .ok_or(reject::custom(Error::Unauthorized))
     }
@@ -160,17 +161,17 @@ pub mod filters {
             .and_then(authorize_api_request_impl)
     }
 
-    async fn acquire_job(db: DbConn, api_user: api::APIUser) -> Result<Option<Job>, Rejection>  {
+    async fn acquire_job(db: DbConn, api_user: api::APIUser) -> StdResult<Option<Job>, Rejection>  {
         return Ok(None);
     }
 
-    async fn check_key_validity(db: DbConn, key: String) -> Result<String, Rejection>  {
+    async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection>  {
         get_user_from_key(db, &key.into()).await?
             .ok_or(reject::not_found())
             .map(|_| String::new())
     }
 
-    async fn json_object_or_no_content<T: Serialize>(value: Option<T>) -> Result<WithStatus<Json>, Rejection> {
+    async fn json_object_or_no_content<T: Serialize>(value: Option<T>) -> StdResult<WithStatus<Json>, Rejection> {
         value.map_or(
             Ok(reply::with_status(reply::json(&String::new()), http::StatusCode::NO_CONTENT)),
             |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK))
