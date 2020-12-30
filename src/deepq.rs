@@ -16,9 +16,8 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod model {
-    use chrono::prelude::*;
     use derive_more::{Display, From};
-    use mongodb::bson::{doc, oid::ObjectId, Bson};
+    use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -72,34 +71,11 @@ pub mod model {
     pub struct Report {
         pub _id: ObjectId,
         pub user_id: UserId,
-        pub date_requested: DateTime<Utc>,
-        pub date_completed: Option<DateTime<Utc>>,
+        pub date_requested: DateTime,
+        pub date_completed: Option<DateTime>,
         pub origin: ReportOrigin,
         pub report_type: ReportType,
         pub games: Vec<GameId>,
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
-    #[serde(rename_all = "lowercase")]
-    pub enum AnalysisType {
-        Fishnet,
-        Deep,
-    }
-
-    impl From<AnalysisType> for Bson {
-        fn from(at: AnalysisType) -> Bson {
-            Bson::String(at.to_string().to_lowercase())
-        }
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct FishnetJob {
-        pub _id: ObjectId,
-        pub game_id: GameId,
-        pub analysis_type: AnalysisType,
-        pub precedence: i32,
-        pub owner: Option<String>, // TODO: this should be the key from the database
-        pub date_last_updated: DateTime<Utc>,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -139,7 +115,7 @@ pub mod api {
     use chrono::prelude::*;
     use futures::future::Future;
     use mongodb::{
-        bson::{doc, oid::ObjectId, to_document, Bson},
+        bson::{doc, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
         options::UpdateOptions,
     };
 
@@ -163,7 +139,7 @@ pub mod api {
                 origin: report.origin,
                 report_type: report.report_type,
                 games: report.games,
-                date_requested: Utc::now(),
+                date_requested: BsonDateTime(Utc::now()),
                 date_completed: None,
             }
         }
@@ -175,29 +151,6 @@ pub mod api {
             m::ReportOrigin::Tournament => 100i32,
             m::ReportOrigin::Leaderboard => 100i32,
             m::ReportOrigin::Random => 10i32,
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct CreateFishnetJob {
-        pub game_id: m::GameId,
-        pub analysis_type: m::AnalysisType,
-        pub report_origin: Option<m::ReportOrigin>,
-    }
-
-    impl From<CreateFishnetJob> for m::FishnetJob {
-        fn from(job: CreateFishnetJob) -> m::FishnetJob {
-            m::FishnetJob {
-                _id: ObjectId::new(),
-                game_id: job.game_id,
-                analysis_type: job.analysis_type,
-                precedence: job
-                    .report_origin
-                    .map(precedence_for_origin)
-                    .unwrap_or(100_i32),
-                owner: None,
-                date_last_updated: Utc::now(),
-            }
         }
     }
 
@@ -284,25 +237,5 @@ pub mod api {
             .insert_one(to_document(&report)?, None)
             .await?
             .inserted_id)
-    }
-
-    pub async fn insert_one_fishnet_job(db: DbConn, job: CreateFishnetJob) -> Result<Bson> {
-        let fishnet_job_col = db.database.collection("deepq_fishnetjobs");
-        let job: m::FishnetJob = job.into();
-        Ok(fishnet_job_col
-            .insert_one(to_document(&job)?, None)
-            .await?
-            .inserted_id)
-    }
-
-    pub fn insert_many_fishnet_jobs<'a, T>(
-        db: DbConn,
-        jobs: &'a T,
-    ) -> impl Iterator<Item = impl Future<Output = Result<Bson>>> + 'a
-    where
-        T: Iterator<Item = &'a CreateFishnetJob> + Clone,
-    {
-        jobs.clone()
-            .map(move |job| insert_one_fishnet_job(db.clone(), job.clone()))
     }
 }

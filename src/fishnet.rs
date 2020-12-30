@@ -14,14 +14,11 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
-
-pub mod api {
+pub mod model {
+    use mongodb::bson::{oid::ObjectId, Bson, DateTime};
     use serde::{Deserialize, Serialize};
 
-    use crate::db::DbConn;
-    use crate::deepq::model::UserId;
-    use crate::error::Result;
-    use mongodb::bson::{doc, from_document};
+    use crate::deepq::model::{GameId, UserId};
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Key(pub String);
@@ -39,14 +36,98 @@ pub mod api {
         pub name: String,
     }
 
-    pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>> {
-        let col = db.database.collection("token");
+    #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
+    #[serde(rename_all = "lowercase")]
+    pub enum AnalysisType {
+        UserAnalysis,
+        Deep,
+    }
+
+    impl From<AnalysisType> for Bson {
+        fn from(at: AnalysisType) -> Bson {
+            Bson::String(at.to_string().to_lowercase())
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct Job {
+        pub _id: ObjectId,
+        pub game_id: GameId,
+        pub analysis_type: AnalysisType,
+        pub precedence: i32,
+        pub owner: Option<String>, // TODO: this should be the key from the database
+        pub date_last_updated: DateTime,
+    }
+}
+
+pub mod api {
+    use chrono::prelude::*;
+    use futures::future::Future;
+    use mongodb::bson::{
+        doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
+    };
+
+    use crate::db::DbConn;
+    use crate::deepq::model::GameId;
+    use crate::error::{Error, Result};
+    use crate::fishnet::model as m;
+
+    #[derive(Debug, Clone)]
+    pub struct CreateJob {
+        pub game_id: GameId,
+        pub analysis_type: m::AnalysisType,
+        pub precedence: i32,
+    }
+
+    impl From<CreateJob> for m::Job {
+        fn from(job: CreateJob) -> m::Job {
+            m::Job {
+                _id: ObjectId::new(),
+                game_id: job.game_id,
+                analysis_type: job.analysis_type,
+                precedence: job.precedence,
+                owner: None,
+                date_last_updated: BsonDateTime(Utc::now()),
+            }
+        }
+    }
+
+    pub async fn get_api_user(db: DbConn, key: &m::Key) -> Result<Option<m::APIUser>> {
+        let col = db.database.collection("deepq_token");
         Ok(col
             .find_one(doc! {"key": key.0.clone()}, None)
             .await?
             .map(from_document)
             .transpose()?)
     }
+
+    pub async fn insert_one_job(db: DbConn, job: CreateJob) -> Result<ObjectId> {
+        let job_col = db.database.collection("deepq_fishnetjobs");
+        let job: m::Job = job.into();
+        Ok(job_col
+            .insert_one(to_document(&job)?, None)
+            .await?
+            .inserted_id
+            .as_object_id()
+            .ok_or(Error::CreateError)?
+            .clone())
+    }
+
+    pub fn insert_many_jobs<'a, T>(
+        db: DbConn,
+        jobs: &'a T,
+    ) -> impl Iterator<Item = impl Future<Output = Result<ObjectId>>> + 'a
+    where
+        T: Iterator<Item = &'a CreateJob> + Clone,
+    {
+        jobs.clone()
+            .map(move |job| insert_one_job(db.clone(), job.clone()))
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct JobRequest {
+    }
+    
 }
 
 pub mod filters {
@@ -64,6 +145,7 @@ pub mod filters {
     use crate::db::DbConn;
     use crate::error::Error;
     use crate::fishnet::api;
+    use crate::fishnet::model as m;
 
     // TODO: make this complete for all of the variant types we should support.
     #[derive(Serialize, Deserialize, Debug)]
@@ -84,7 +166,7 @@ pub mod filters {
     pub struct RequestInfo {
         version: String,
         #[serde(rename = "apikey")]
-        api_key: api::Key,
+        api_key: m::Key,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -128,8 +210,8 @@ pub mod filters {
 
     async fn get_user_from_key(
         db: DbConn,
-        key: &api::Key,
-    ) -> StdResult<Option<api::APIUser>, Rejection> {
+        key: &m::Key,
+    ) -> StdResult<Option<m::APIUser>, Rejection> {
         Ok(api::get_api_user(db, key).await?)
     }
 
@@ -138,7 +220,7 @@ pub mod filters {
     async fn authorize_api_request_impl(
         db: DbConn,
         request_info: FishnetRequest,
-    ) -> StdResult<api::APIUser, Rejection> {
+    ) -> StdResult<m::APIUser, Rejection> {
         get_user_from_key(db, &request_info.fishnet.api_key)
             .await?
             .ok_or(reject::custom(Error::Unauthorized))
@@ -147,14 +229,14 @@ pub mod filters {
     /// extract an APIUser from the json body request
     fn extract_api_user(
         db: DbConn,
-    ) -> impl Filter<Extract = (api::APIUser,), Error = Rejection> + Clone {
+    ) -> impl Filter<Extract = (m::APIUser,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json())
             .and_then(authorize_api_request_impl)
     }
 
-    async fn acquire_job(db: DbConn, api_user: api::APIUser) -> StdResult<Option<Job>, Rejection> {
+    async fn acquire_job(_db: DbConn, _api_user: m::APIUser) -> StdResult<Option<Job>, Rejection> {
         return Ok(None);
     }
 

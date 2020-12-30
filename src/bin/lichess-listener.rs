@@ -27,8 +27,7 @@ use tokio::io::stream_reader;
 use tokio::time::{delay_for, Duration};
 
 use lila_deepq::db::DbConn;
-use lila_deepq::irwin::model::{Request, KeepAlive};
-use lila_deepq::irwin::api::{add_to_queue};
+use lila_deepq::irwin::{Request, KeepAlive, add_to_queue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -22,11 +22,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
 use crate::deepq::api::{
-    insert_many_fishnet_jobs, insert_many_games, insert_one_report, CreateFishnetJob, CreateGame,
-    CreateReport,
+    insert_many_games, insert_one_report, precedence_for_origin, CreateGame, CreateReport,
 };
-use crate::deepq::model::{AnalysisType, Eval, GameId, ReportOrigin, ReportType, UserId};
+use crate::deepq::model::{Eval, GameId, ReportOrigin, ReportType, UserId};
 use crate::error::Result;
+use crate::fishnet::api::{insert_many_jobs, CreateJob};
+use crate::fishnet::model::AnalysisType;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
@@ -78,15 +79,15 @@ impl From<Request> for CreateReport {
     }
 }
 
-impl From<Request> for Vec<CreateFishnetJob> {
-    fn from(request: Request) -> Vec<CreateFishnetJob> {
+impl From<Request> for Vec<CreateJob> {
+    fn from(request: Request) -> Vec<CreateJob> {
         request
             .games
             .iter()
-            .map(|g| CreateFishnetJob {
+            .map(|g| CreateJob {
                 game_id: g.id.clone(),
                 analysis_type: AnalysisType::Deep,
-                report_origin: Some(request.clone().origin),
+                precedence: precedence_for_origin(request.clone().origin),
             })
             .collect()
     }
@@ -104,8 +105,8 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
         request.games.iter().map(Into::into),
     ))
     .await;
-    let fishnet_jobs: Vec<CreateFishnetJob> = request.clone().into();
-    join_all(insert_many_fishnet_jobs(
+    let fishnet_jobs: Vec<CreateJob> = request.clone().into();
+    join_all(insert_many_jobs(
         db.clone(),
         fishnet_jobs.iter().by_ref(),
     ))
