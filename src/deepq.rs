@@ -148,8 +148,8 @@ pub mod api {
     pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
         match origin {
             m::ReportOrigin::Moderator => 1_000_000i32,
+            m::ReportOrigin::Leaderboard => 1000i32,
             m::ReportOrigin::Tournament => 100i32,
-            m::ReportOrigin::Leaderboard => 100i32,
             m::ReportOrigin::Random => 10i32,
         }
     }
