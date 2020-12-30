@@ -17,13 +17,9 @@
 
 pub mod model {
     use chrono::prelude::*;
-    use derive_more::{From, Display};
-    use serde::{Serialize, Deserialize};
-    use mongodb::bson::{
-        doc,
-        Bson,
-        oid::ObjectId
-    };
+    use derive_more::{Display, From};
+    use mongodb::bson::{doc, oid::ObjectId, Bson};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
     pub struct UserId(pub String);
@@ -72,7 +68,6 @@ pub mod model {
         }
     }
 
-
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Report {
         pub _id: ObjectId,
@@ -97,7 +92,6 @@ pub mod model {
         }
     }
 
-
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct FishnetJob {
         pub _id: ObjectId,
@@ -107,7 +101,6 @@ pub mod model {
         pub owner: Option<String>, // TODO: this should be the key from the database
         pub date_last_updated: DateTime<Utc>,
     }
-
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Blurs {
@@ -144,15 +137,15 @@ pub mod model {
 
 pub mod api {
     use chrono::prelude::*;
+    use futures::future::Future;
     use mongodb::{
-        bson::{Bson, doc, to_document, oid::ObjectId},
+        bson::{doc, oid::ObjectId, to_document, Bson},
         options::UpdateOptions,
     };
-    use futures::future::Future;
 
     use crate::db::DbConn;
+    use crate::deepq::model as m;
     use crate::error::{Error, Result};
-    use crate::deepq::{model as m};
 
     #[derive(Debug, Clone)]
     pub struct CreateReport {
@@ -171,7 +164,7 @@ pub mod api {
                 report_type: report.report_type,
                 games: report.games,
                 date_requested: Utc::now(),
-                date_completed: None
+                date_completed: None,
             }
         }
     }
@@ -198,7 +191,10 @@ pub mod api {
                 _id: ObjectId::new(),
                 game_id: job.game_id,
                 analysis_type: job.analysis_type,
-                precedence: job.report_origin.map(precedence_for_origin).unwrap_or(100_i32),
+                precedence: job
+                    .report_origin
+                    .map(precedence_for_origin)
+                    .unwrap_or(100_i32),
                 owner: None,
                 date_last_updated: Utc::now(),
             }
@@ -207,8 +203,8 @@ pub mod api {
 
     #[derive(Debug, Clone)]
     pub struct CreateGame {
-        pub game_id: m::GameId, // NOTE: I am purposefully renaming this here, from _id. 
-                             //       Maybe I'll regret it later
+        pub game_id: m::GameId, // NOTE: I am purposefully renaming this here, from _id.
+        //       Maybe I'll regret it later
         pub emts: Vec<i32>,
         pub pgn: String,
         pub black: Option<m::UserId>,
@@ -249,52 +245,64 @@ pub mod api {
         }
     }
 
-
     pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<Bson> {
         // TODO: because games are unique on their game id, we have to do an upsert
         let game: m::Game = game.into();
         let games_coll = db.database.collection("deepq_games");
-        games_coll.update_one(
-            doc!{ "_id": game._id.clone() },
-            to_document(&game)?,
-            Some(UpdateOptions::builder().upsert(true).build())
-        ).await?;
-        Ok(
-            games_coll
-                .find_one(doc!{ "_id": game._id.clone() }, None).await?
-                .ok_or(Error::CreateError)?
-                .get("_id")
-                .ok_or(Error::CreateError)?
-                .clone()
-        )
+        games_coll
+            .update_one(
+                doc! { "_id": game._id.clone() },
+                to_document(&game)?,
+                Some(UpdateOptions::builder().upsert(true).build()),
+            )
+            .await?;
+        Ok(games_coll
+            .find_one(doc! { "_id": game._id.clone() }, None)
+            .await?
+            .ok_or(Error::CreateError)?
+            .get("_id")
+            .ok_or(Error::CreateError)?
+            .clone())
     }
 
-    pub fn insert_many_games<T>(db: DbConn, games: T)
-        -> impl Iterator<Item=impl Future<Output=Result<Bson>>>
-        where
-            T: Iterator<Item=CreateGame> + Clone
+    pub fn insert_many_games<T>(
+        db: DbConn,
+        games: T,
+    ) -> impl Iterator<Item = impl Future<Output = Result<Bson>>>
+    where
+        T: Iterator<Item = CreateGame> + Clone,
     {
-        games.clone().map(move |game| insert_one_game(db.clone(), game.clone()))
+        games
+            .clone()
+            .map(move |game| insert_one_game(db.clone(), game.clone()))
     }
 
     pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
         let reports_coll = db.database.collection("deepq_reports");
         let report: m::Report = report.into();
-        Ok(reports_coll.insert_one(to_document(&report)?, None).await?.inserted_id)
+        Ok(reports_coll
+            .insert_one(to_document(&report)?, None)
+            .await?
+            .inserted_id)
     }
 
     pub async fn insert_one_fishnet_job(db: DbConn, job: CreateFishnetJob) -> Result<Bson> {
         let fishnet_job_col = db.database.collection("deepq_fishnetjobs");
         let job: m::FishnetJob = job.into();
-        Ok(fishnet_job_col.insert_one(to_document(&job)?, None).await?.inserted_id)
+        Ok(fishnet_job_col
+            .insert_one(to_document(&job)?, None)
+            .await?
+            .inserted_id)
     }
 
-    pub fn insert_many_fishnet_jobs<'a, T>(db: DbConn, jobs: &'a T)
-        -> impl Iterator<Item=impl Future<Output=Result<Bson>>> + 'a
-        where
-            T: Iterator<Item=&'a CreateFishnetJob> + Clone
+    pub fn insert_many_fishnet_jobs<'a, T>(
+        db: DbConn,
+        jobs: &'a T,
+    ) -> impl Iterator<Item = impl Future<Output = Result<Bson>>> + 'a
+    where
+        T: Iterator<Item = &'a CreateFishnetJob> + Clone,
     {
-        jobs.clone().map(move |job| insert_one_fishnet_job(db.clone(), job.clone()))
+        jobs.clone()
+            .map(move |job| insert_one_fishnet_job(db.clone(), job.clone()))
     }
-
 }

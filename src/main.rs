@@ -24,17 +24,18 @@ mod fishnet;
 
 extern crate dotenv;
 extern crate futures;
-extern crate serde_json;
 extern crate pretty_env_logger;
+extern crate serde_json;
 extern crate serde_with;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
 use std::env;
-use std::result::{Result as StdResult};
+use std::result::Result as StdResult;
 
+use crate::db::DbConn;
 use dotenv::dotenv;
 use mongodb::Client;
-use crate::db::DbConn;
 
 #[tokio::main]
 async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
@@ -46,16 +47,16 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
     let database = client.database(&database_name);
-    let db = DbConn{client: client, database: database};
+    let db = DbConn {
+        client: client,
+        database: database,
+    };
 
     info!("Starting server");
 
     let app = fishnet::filters::mount(db.clone());
 
-    warp::serve(app)
-        .run(([127, 0, 0, 1], 3030))
-        .await;
+    warp::serve(app).run(([127, 0, 0, 1], 3030)).await;
 
     Ok(())
 }
-

@@ -15,12 +15,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-use mongodb::error::{Error as _MongoDBError};
 use mongodb::bson::{
-    de::{Error as _BsonDeError},
-    ser::{Error as _BsonSeError},
-    document::{ValueAccessError as _BsonValueAccessError},
+    de::Error as _BsonDeError, document::ValueAccessError as _BsonValueAccessError,
+    ser::Error as _BsonSeError,
 };
+use mongodb::error::Error as _MongoDBError;
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;

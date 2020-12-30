@@ -16,14 +16,9 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod api {
-    use serde::{
-        Serialize,
-        Deserialize
-    };
     use mongodb::bson::{doc, Document};
+    use serde::{Deserialize, Serialize};
 
     use crate::db::DbConn;
     use crate::error::Error;
-
-
 }

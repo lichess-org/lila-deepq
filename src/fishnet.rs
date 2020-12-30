@@ -16,18 +16,12 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod api {
-    use serde::{
-        Serialize,
-        Deserialize,
-    };
+    use serde::{Deserialize, Serialize};
 
-    use mongodb::bson::{
-        doc,
-        from_document,
-    };
-    use crate::error::Result;
-    use crate::deepq::model::UserId;
     use crate::db::DbConn;
+    use crate::deepq::model::UserId;
+    use crate::error::Result;
+    use mongodb::bson::{doc, from_document};
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Key(pub String);
@@ -47,37 +41,35 @@ pub mod api {
 
     pub async fn get_api_user(db: DbConn, key: &Key) -> Result<Option<APIUser>> {
         let col = db.database.collection("token");
-        Ok(
-            col.find_one(doc!{"key": key.0.clone()}, None).await?
-                .map(from_document)
-                .transpose()?
-        )
+        Ok(col
+            .find_one(doc! {"key": key.0.clone()}, None)
+            .await?
+            .map(from_document)
+            .transpose()?)
     }
 }
 
 pub mod filters {
-    use std::result::{Result as StdResult};
-    use serde::{Serialize, Deserialize};
-    use warp::{
-        Filter,
-        filters::BoxedFilter,
-        http,
-        reject,
-        Rejection,
-        reply::{self, Json, Reply, WithStatus},
-    };
+    use serde::{Deserialize, Serialize};
     use serde_with::{serde_as, DisplayFromStr};
     use shakmaty::fen::Fen;
+    use std::result::Result as StdResult;
+    use warp::{
+        filters::BoxedFilter,
+        http, reject,
+        reply::{self, Json, Reply, WithStatus},
+        Filter, Rejection,
+    };
 
-    use crate::error::Error;
     use crate::db::DbConn;
+    use crate::error::Error;
     use crate::fishnet::api;
 
     // TODO: make this complete for all of the variant types we should support.
     #[derive(Serialize, Deserialize, Debug)]
     pub enum Variant {
         #[serde(rename = "standard")]
-        Standard
+        Standard,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -85,24 +77,24 @@ pub mod filters {
         #[serde(rename = "analysis")]
         Analysis,
         #[serde(rename = "move")]
-        Move
+        Move,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct RequestInfo {
         version: String,
         #[serde(rename = "apikey")]
-        api_key: api::Key
+        api_key: api::Key,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct FishnetRequest {
-        fishnet: RequestInfo
+        fishnet: RequestInfo,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct AcquireRequest {
-        fishnet: RequestInfo
+        fishnet: RequestInfo,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -116,7 +108,7 @@ pub mod filters {
         #[serde(rename = "type")]
         _type: WorkType,
         id: String,
-        nodes: Nodes
+        nodes: Nodes,
     }
 
     #[serde_as]
@@ -145,57 +137,61 @@ pub mod filters {
     //      are unstable.
     async fn authorize_api_request_impl(
         db: DbConn,
-        request_info: FishnetRequest
+        request_info: FishnetRequest,
     ) -> StdResult<api::APIUser, Rejection> {
-        get_user_from_key(db, &request_info.fishnet.api_key).await?
+        get_user_from_key(db, &request_info.fishnet.api_key)
+            .await?
             .ok_or(reject::custom(Error::Unauthorized))
     }
 
     /// extract an APIUser from the json body request
-    fn extract_api_user(db: DbConn) -> impl Filter<Extract = (api::APIUser,), Error = Rejection> + Clone {
+    fn extract_api_user(
+        db: DbConn,
+    ) -> impl Filter<Extract = (api::APIUser,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json())
             .and_then(authorize_api_request_impl)
     }
 
-    async fn acquire_job(db: DbConn, api_user: api::APIUser) -> StdResult<Option<Job>, Rejection>  {
+    async fn acquire_job(db: DbConn, api_user: api::APIUser) -> StdResult<Option<Job>, Rejection> {
         return Ok(None);
     }
 
-    async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection>  {
-        get_user_from_key(db, &key.into()).await?
+    async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
+        get_user_from_key(db, &key.into())
+            .await?
             .ok_or(reject::not_found())
             .map(|_| String::new())
     }
 
-    async fn json_object_or_no_content<T: Serialize>(value: Option<T>) -> StdResult<WithStatus<Json>, Rejection> {
+    async fn json_object_or_no_content<T: Serialize>(
+        value: Option<T>,
+    ) -> StdResult<WithStatus<Json>, Rejection> {
         value.map_or(
-            Ok(reply::with_status(reply::json(&String::new()), http::StatusCode::NO_CONTENT)),
-            |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK))
+            Ok(reply::with_status(
+                reply::json(&String::new()),
+                http::StatusCode::NO_CONTENT,
+            )),
+            |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK)),
         )
     }
 
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-        let extract_api_user =
-            extract_api_user(db.clone());
+        let extract_api_user = extract_api_user(db.clone());
         let db = warp::any().map(move || db.clone());
 
-        let acquire =
-            warp::path("acquire")
-                .and(db.clone())
-                .and(extract_api_user)
-                .and_then(acquire_job)
-                .and_then(json_object_or_no_content::<Job>);
+        let acquire = warp::path("acquire")
+            .and(db.clone())
+            .and(extract_api_user)
+            .and_then(acquire_job)
+            .and_then(json_object_or_no_content::<Job>);
 
-        let valid_key = 
-            warp::path("key")
+        let valid_key = warp::path("key")
             .and(db.clone())
             .and(warp::path::param())
             .and_then(check_key_validity);
 
-        acquire
-            .or(valid_key)
-            .boxed()
+        acquire.or(valid_key).boxed()
     }
 }
