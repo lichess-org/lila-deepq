@@ -45,6 +45,9 @@ pub enum Error {
     #[error("Mongo Database Error")]
     MongoDBError(#[from] _MongoDBError),
 
+    #[error("Unable to deserialize something")]
+    DeserializationError,
+
     #[error("Unauthorized")]
     Unauthorized,
 

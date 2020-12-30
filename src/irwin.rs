@@ -86,7 +86,7 @@ impl From<Request> for Vec<CreateJob> {
             .iter()
             .map(|g| CreateJob {
                 game_id: g.id.clone(),
-                analysis_type: AnalysisType::Deep,
+                analysis_type: AnalysisType::IrwinDeep,
                 precedence: precedence_for_origin(request.clone().origin),
             })
             .collect()
@@ -106,11 +106,7 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     ))
     .await;
     let fishnet_jobs: Vec<CreateJob> = request.clone().into();
-    join_all(insert_many_jobs(
-        db.clone(),
-        fishnet_jobs.iter().by_ref(),
-    ))
-    .await;
+    join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await;
     insert_one_report(db.clone(), request.into()).await?;
     Ok(())
 }

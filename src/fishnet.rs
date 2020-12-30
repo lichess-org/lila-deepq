@@ -16,9 +16,10 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 pub mod model {
     use derive_more::{Display, From};
-    use mongodb::bson::{oid::ObjectId, Bson, DateTime};
+    use mongodb::{ Collection, bson::{oid::ObjectId, Bson, DateTime}};
     use serde::{Deserialize, Serialize};
 
+    use crate::db::DbConn;
     use crate::deepq::model::{GameId, UserId};
 
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -34,7 +35,8 @@ pub mod model {
     #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
         UserAnalysis,
-        Deep,
+        IrwinDeep,
+        CRDeep,
     }
 
     impl From<AnalysisType> for Bson {
@@ -51,6 +53,12 @@ pub mod model {
         pub perms: Vec<AnalysisType>,
     }
 
+    impl ApiUser {
+        pub fn coll(db: DbConn) -> Collection {
+            db.database.collection("deepq_apiuser")
+        }
+    }
+
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Job {
         pub _id: ObjectId,
@@ -59,6 +67,12 @@ pub mod model {
         pub precedence: i32,
         pub owner: Option<String>, // TODO: this should be the key from the database
         pub date_last_updated: DateTime,
+    }
+
+    impl Job {
+        pub fn coll(db: DbConn) -> Collection {
+            db.database.collection("deepq_fishnetjobs")
+        }
     }
 }
 
@@ -96,7 +110,7 @@ pub mod api {
     }
 
     pub async fn get_api_user(db: DbConn, key: &m::Key) -> Result<Option<m::ApiUser>> {
-        let col = db.database.collection("deepq_apiuser");
+        let col = m::ApiUser::coll(db);
         Ok(col
             .find_one(doc! {"key": key.0.clone()}, None)
             .await?
@@ -105,7 +119,7 @@ pub mod api {
     }
 
     pub async fn insert_one_job(db: DbConn, job: CreateJob) -> Result<ObjectId> {
-        let job_col = db.database.collection("deepq_fishnetjobs");
+        let job_col = m::Job::coll(db);
         let job: m::Job = job.into();
         Ok(job_col
             .insert_one(to_document(&job)?, None)
@@ -128,8 +142,7 @@ pub mod api {
     }
 
     pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Job>> {
-        let job_col = &db.database.collection("deepq_fishnetjobs");
-        let api_user = &api_user;
+        let job_col = m::Job::coll(db);
         Ok(job_col
             .find_one_and_update(
                 doc! {
@@ -144,6 +157,24 @@ pub mod api {
             .await?
             .map(from_document)
             .transpose()?)
+    }
+
+    pub async fn unassign_job(db: DbConn, id: ObjectId) -> Result<()> {
+        m::Job::coll(db)
+            .update_one(
+                doc!{ "_id": id },
+                UpdateModifications::Document(doc!{"owner": Bson::Null}),
+                None
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
+        m::Job::coll(db)
+            .delete_one(doc!{ "_id": id }, None)
+            .await?;
+        Ok(())
     }
 }
 
@@ -160,7 +191,7 @@ pub mod filters {
     };
 
     use crate::db::DbConn;
-    use crate::deepq::api::find_game;
+    use crate::deepq::api::{find_game, starting_position};
     use crate::error::Error;
     use crate::fishnet::api;
     use crate::fishnet::model as m;
@@ -204,11 +235,18 @@ pub mod filters {
     }
 
     #[derive(Serialize, Deserialize, Debug)]
+    pub struct Analysis {
+        depth: u8,
+        multipv: bool,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct WorkInfo {
         #[serde(rename = "type")]
         _type: WorkType,
         id: String,
         nodes: Nodes,
+        analysis: Option<Analysis>
     }
 
     #[serde_as]
@@ -223,7 +261,7 @@ pub mod filters {
         moves: String,
 
         #[serde(rename = "skipPositions")]
-        skip_positions: Vec<u64>,
+        skip_positions: Vec<u8>,
     }
 
     async fn get_user_from_key(
@@ -254,37 +292,83 @@ pub mod filters {
             .and_then(authorize_api_request_impl)
     }
 
-    async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
-        match api::assign_job(db.clone(), api_user).await? {
-            Some(job) => {
-                // TODO: This doesn't properly unassign the job in the case of error
-                let game = find_game(db, job.game_id.clone()).await?;
-                // TODO: eventually this fen should come from the actual game.
-                let position: Fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                    .parse()
-                    .expect("this cannot fail");
-                Ok(game.map(|game| {
-                    Job {
-                        game_id: job.game_id.to_string(),
-                        position: position,
-                        variant: Variant::Standard,
-                        // TODO: Figure out what these should be.
-                        skip_positions: Vec::new(),
-                        moves: game.pgn,
-                        work: WorkInfo {
-                            id: job._id.to_string(),
-                            _type: WorkType::Analysis,
-                            nodes: Nodes {
-                                // TODO: Grab these from somewhere
-                                nnue: 2_000_000_u64,
-                                classical: 4_000_000_u64,
-                            },
-                        },
-                    }
-                }))
+    // TODO: get this from config or env? or lila? (probably lila, tbh)
+    fn nodes_for_job(job: &m::Job) -> Nodes {
+        match job.analysis_type {
+            // TODO: what is the default right now for lila's fishnet queue?
+            m::AnalysisType::UserAnalysis => Nodes {
+                nnue: 2_250_000_u64,
+                classical: 4_050_000_u64,
+            },
+            m::AnalysisType::CRDeep => Nodes {
+                nnue: 2_500_000_u64,
+                classical: 4_500_000_u64,
+            },
+            m::AnalysisType::IrwinDeep => Nodes {
+                nnue: 2_500_000_u64,
+                classical: 4_500_000_u64,
             }
-            None => Ok(None),
         }
+    }
+
+    // TODO: get this from config or env? or lila? (probably lila, tbh)
+    fn analysis_for_job(job: &m::Job) -> Option<Analysis> {
+        match job.analysis_type {
+            m::AnalysisType::CRDeep => Some(Analysis {
+                // TODO: what is the default that we tend to use for CR?
+                depth: 40,
+                multipv: false,
+            }),
+            _ => None
+        }
+    }
+
+    // TODO: get this from config or env? or lila? (probably lila, tbh)
+    fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
+        match job.analysis_type {
+            // TODO: what is the default right now for lila's fishnet queue?
+            m::AnalysisType::UserAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            m::AnalysisType::CRDeep => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            m::AnalysisType::IrwinDeep => Vec::new()
+        }
+    }
+
+    async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
+        // NOTE: not using .map because of unstable async lambdas
+        Ok(match api::assign_job(db.clone(), api_user).await? {
+            Some(job) => {
+                let game = match find_game(db.clone(), job.game_id.clone()).await {
+                    Ok(game) => Ok(game),
+                    Err(err) => {
+                        api::unassign_job(db.clone(), job._id.clone()).await?;
+                        Err(err)
+                    }
+                }?;
+                match game {
+                    None => {
+                        api::delete_job(db.clone(), job._id).await?;
+                        // TODO: I don't yet understand recursion in an async function in Rust.
+                        None // acquire_job(db.clone(), api_user.clone())?
+                    },
+                    Some(game) => {
+                        Some(Job {
+                            game_id: job.game_id.to_string(),
+                            position: starting_position(game.clone()),
+                            variant: Variant::Standard,
+                            skip_positions: skip_positions_for_job(&job),
+                            moves: game.pgn,
+                            work: WorkInfo {
+                                id: job._id.to_string(),
+                                _type: WorkType::Analysis,
+                                nodes: nodes_for_job(&job),
+                                analysis: analysis_for_job(&job),
+                            },
+                        })
+                    }
+                }
+            },
+            None => None
+        })
     }
 
     async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {

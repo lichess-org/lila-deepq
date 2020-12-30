@@ -115,9 +115,10 @@ pub mod api {
     use chrono::prelude::*;
     use futures::future::Future;
     use mongodb::{
-        bson::{doc, oid::ObjectId, from_document, to_document, Bson, DateTime as BsonDateTime},
+        bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
         options::UpdateOptions,
     };
+    use shakmaty::fen::Fen;
 
     use crate::db::DbConn;
     use crate::deepq::model as m;
@@ -152,6 +153,13 @@ pub mod api {
             m::ReportOrigin::Tournament => 100i32,
             m::ReportOrigin::Random => 10i32,
         }
+    }
+
+    pub fn starting_position(_game: m::Game) -> Fen {
+        // TODO: this will eventually need to be smarter, but not for v1
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            .parse()
+            .expect("this cannot fail")
     }
 
     #[derive(Debug, Clone)]
@@ -233,7 +241,7 @@ pub mod api {
     pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {
         let games_coll = db.database.collection("deepq_games");
         Ok(games_coll
-            .find_one(doc!{"_id": game_id}, None)
+            .find_one(doc! {"_id": game_id}, None)
             .await?
             .map(from_document)
             .transpose()?)
