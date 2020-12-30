@@ -31,7 +31,7 @@ pub mod model {
 
     impl From<UserId> for Bson {
         fn from(ui: UserId) -> Bson {
-            Bson::String(ui.to_string())
+            Bson::String(ui.to_string().to_lowercase())
         }
     }
 
@@ -40,7 +40,7 @@ pub mod model {
 
     impl From<GameId> for Bson {
         fn from(gi: GameId) -> Bson {
-            Bson::String(gi.to_string())
+            Bson::String(gi.to_string().to_lowercase())
         }
     }
 
@@ -49,12 +49,13 @@ pub mod model {
     pub enum ReportOrigin {
         Moderator,
         Random,
+        Leaderboard,
         Tournament,
     }
 
     impl From<ReportOrigin> for Bson {
         fn from(ro: ReportOrigin) -> Bson {
-            Bson::String(ro.to_string())
+            Bson::String(ro.to_string().to_lowercase())
         }
     }
 
@@ -62,11 +63,13 @@ pub mod model {
         match origin {
             ReportOrigin::Moderator => 1_000_000u64,
             ReportOrigin::Tournament => 100u64,
+            ReportOrigin::Leaderboard => 100u64,
             ReportOrigin::Random => 10u64,
         }
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
+    #[serde(rename_all = "lowercase")]
     pub enum ReportType {
         Irwin,
         CR,
@@ -75,7 +78,7 @@ pub mod model {
 
     impl From<ReportType> for Bson {
         fn from(rt: ReportType) -> Bson {
-            Bson::String(rt.to_string())
+            Bson::String(rt.to_string().to_lowercase())
         }
     }
 
@@ -111,6 +114,7 @@ pub mod model {
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
+    #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
         Fishnet,
         Deep,
@@ -118,7 +122,7 @@ pub mod model {
 
     impl From<AnalysisType> for Bson {
         fn from(at: AnalysisType) -> Bson {
-            Bson::String(at.to_string())
+            Bson::String(at.to_string().to_lowercase())
         }
     }
 
