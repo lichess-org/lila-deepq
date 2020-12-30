@@ -115,7 +115,7 @@ pub mod api {
     use chrono::prelude::*;
     use futures::future::Future;
     use mongodb::{
-        bson::{doc, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
+        bson::{doc, oid::ObjectId, from_document, to_document, Bson, DateTime as BsonDateTime},
         options::UpdateOptions,
     };
 
@@ -228,6 +228,15 @@ pub mod api {
         games
             .clone()
             .map(move |game| insert_one_game(db.clone(), game.clone()))
+    }
+
+    pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {
+        let games_coll = db.database.collection("deepq_games");
+        Ok(games_coll
+            .find_one(doc!{"_id": game_id}, None)
+            .await?
+            .map(from_document)
+            .transpose()?)
     }
 
     pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
