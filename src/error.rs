@@ -16,8 +16,11 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 use mongodb::error::{Error as _MongoDBError};
-use mongodb::bson::de::{Error as _BsonDeError};
-use mongodb::bson::ser::{Error as _BsonSeError};
+use mongodb::bson::{
+    de::{Error as _BsonDeError},
+    ser::{Error as _BsonSeError},
+    document::{ValueAccessError as _BsonValueAccessError},
+};
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
@@ -36,6 +39,9 @@ pub enum Error {
 
     #[error("BSON Error")]
     BsonDeserializationError(#[from] _BsonDeError),
+
+    #[error("BSON Error")]
+    BsonValueAccessError(#[from] _BsonValueAccessError),
 
     #[error("Mongo Database Error")]
     MongoDBError(#[from] _MongoDBError),

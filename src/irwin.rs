@@ -35,7 +35,7 @@ pub mod model {
         pub id: UserId,
         pub titled: bool,
         pub engine: bool,
-        pub games: u64,
+        pub games: i64,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,7 +43,7 @@ pub mod model {
         pub id: GameId,
         pub white: UserId,
         pub black: UserId,
-        pub emts: Option<Vec<u64>>,
+        pub emts: Option<Vec<i64>>,
         pub pgn: String, // TODO: this should be more strongly typed.
         pub analysis: Option<Vec<Eval>>,
     }
