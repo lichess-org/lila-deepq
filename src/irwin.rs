@@ -60,6 +60,7 @@ impl From<&Game> for CreateGame {
     }
 }
 
+// TODO: Consider using an enum for the Request/KeepAlive pair here.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Request {
     pub t: String,
