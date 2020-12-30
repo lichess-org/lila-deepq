@@ -20,14 +20,16 @@ pub mod model {
 
     use crate::deepq::model::{
         AnalysisType,
-        CreateFishnetJob,
-        CreateGame,
-        CreateReport,
         Eval,
         GameId,
         ReportOrigin,
         ReportType,
         UserId,
+    };
+    use crate::deepq::api::{
+        CreateFishnetJob,
+        CreateGame,
+        CreateReport,
     };
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -35,7 +37,7 @@ pub mod model {
         pub id: UserId,
         pub titled: bool,
         pub engine: bool,
-        pub games: i64,
+        pub games: i32,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,7 +45,7 @@ pub mod model {
         pub id: GameId,
         pub white: UserId,
         pub black: UserId,
-        pub emts: Option<Vec<i64>>,
+        pub emts: Option<Vec<i32>>,
         pub pgn: String, // TODO: this should be more strongly typed.
         pub analysis: Option<Vec<Eval>>,
     }
@@ -114,7 +116,7 @@ pub mod api {
                 request.games.iter().map(Into::into)
             )
         ).await;
-        let fishnet_jobs: Vec<deepq::model::CreateFishnetJob> = request.clone().into();
+        let fishnet_jobs: Vec<deepq::api::CreateFishnetJob> = request.clone().into();
         join_all(deepq::api::insert_many_fishnet_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await;
         deepq::api::insert_one_report(db.clone(), request.into()).await?;
         Ok(())

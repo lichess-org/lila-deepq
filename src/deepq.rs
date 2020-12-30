@@ -22,8 +22,6 @@ pub mod model {
     use mongodb::bson::{
         doc,
         Bson,
-        Document,
-        ser::to_document,
         oid::ObjectId
     };
 
@@ -60,15 +58,6 @@ pub mod model {
         }
     }
 
-    pub fn precedence_for_origin(origin: ReportOrigin) -> i64 {
-        match origin {
-            ReportOrigin::Moderator => 1_000_000i64,
-            ReportOrigin::Tournament => 100i64,
-            ReportOrigin::Leaderboard => 100i64,
-            ReportOrigin::Random => 10i64,
-        }
-    }
-
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
     #[serde(rename_all = "lowercase")]
     pub enum ReportType {
@@ -95,36 +84,6 @@ pub mod model {
         pub games: Vec<GameId>,
     }
 
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct CreateReport {
-        pub user_id: UserId,
-        pub origin: ReportOrigin,
-        pub report_type: ReportType,
-        pub games: Vec<GameId>,
-    }
-
-    impl From<CreateReport> for Report {
-        fn from(report: CreateReport) -> Report {
-            Report {
-                _id: ObjectId::new(),
-                user_id: report.user_id,
-                origin: report.origin,
-                report_type: report.report_type,
-                games: report.games,
-                date_requested: Utc::now(),
-                date_completed: None
-            }
-        }
-    }
-
-    impl From<CreateReport> for Document {
-        fn from(report: CreateReport) -> Document {
-            let report: Report = report.into();
-            to_document(&report)
-                .expect("should never fail")
-        }
-    }
-
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
     #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
@@ -144,93 +103,32 @@ pub mod model {
         pub _id: ObjectId,
         pub game_id: GameId,
         pub analysis_type: AnalysisType,
-        pub precedence: i64,
+        pub precedence: i32,
         pub owner: Option<String>, // TODO: this should be the key from the database
         pub date_last_updated: DateTime<Utc>,
     }
 
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct CreateFishnetJob {
-        pub game_id: GameId,
-        pub analysis_type: AnalysisType,
-        pub report_origin: Option<ReportOrigin>,
-    }
-
-    impl From<CreateFishnetJob> for FishnetJob {
-        fn from(job: CreateFishnetJob) -> FishnetJob {
-            FishnetJob {
-                _id: ObjectId::new(),
-                game_id: job.game_id,
-                analysis_type: job.analysis_type,
-                precedence: job.report_origin.map(precedence_for_origin).unwrap_or(100_i64),
-                owner: None,
-                date_last_updated: Utc::now(),
-            }
-        }
-    }
-
-    impl From<CreateFishnetJob> for Document {
-        fn from(job: CreateFishnetJob) -> Document {
-            let job: FishnetJob = job.into();
-            to_document(&job)
-                .expect("should never fail")
-        }
-    }
-
-
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Blurs {
-        pub nb: i64,
+        pub nb: i32,
         pub bits: String, // TODO: why string?!
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Eval {
-        pub cp: Option<i64>,
-        pub mate: Option<i64>,
+        pub cp: Option<i32>,
+        pub mate: Option<i32>,
     }
 
     // TODO: this should come directly from the lila db, why store this more than once?
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Game {
-        pub _id: ObjectId, // TODO: I couldn't figure out how to make this directly the GameId
-        pub game_id: GameId,
-        pub emts: Vec<i64>, // TODO: maybe a smaller datatype is more appropriate? u32? u16?
+        pub _id: GameId,
+        pub emts: Vec<i32>,
         pub pgn: String,
         pub black: Option<UserId>,
         pub white: Option<UserId>,
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct CreateGame {
-        pub game_id: GameId,
-        pub emts: Vec<i64>, // TODO: maybe a smaller datatype is more appropriate? u32? u16?
-        pub pgn: String,
-        pub black: Option<UserId>,
-        pub white: Option<UserId>,
-    }
-
-    impl From<CreateGame> for Game {
-        fn from(g: CreateGame) -> Game {
-            Game {
-                _id: ObjectId::new(),
-                game_id: g.game_id,
-                emts: g.emts,
-                pgn: g.pgn,
-                black: g.black,
-                white: g.white,
-            }
-        }
-    }
-
-    impl From<CreateGame> for Document {
-        fn from(game: CreateGame) -> Document {
-            let game: Game = game.into();
-            to_document(&game)
-                .expect("should never fail")
-        }
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -239,22 +137,108 @@ pub mod model {
         pub game_id: GameId,
         pub analysis: Vec<Eval>, // TODO: we should be able to compress this.
         pub requested_pvs: u8,
-        pub requested_depth: Option<i64>,
-        pub requested_nodes: Option<i64>,
+        pub requested_depth: Option<i32>,
+        pub requested_nodes: Option<i32>,
+    }
+}
+
+pub mod api {
+    use chrono::prelude::*;
+    use mongodb::{
+        bson::{Bson, doc, to_document, oid::ObjectId},
+        options::UpdateOptions,
+    };
+    use futures::future::Future;
+
+    use crate::db::DbConn;
+    use crate::error::{Error, Result};
+    use crate::deepq::{model as m};
+
+    #[derive(Debug, Clone)]
+    pub struct CreateReport {
+        pub user_id: m::UserId,
+        pub origin: m::ReportOrigin,
+        pub report_type: m::ReportType,
+        pub games: Vec<m::GameId>,
     }
 
-    #[derive(Serialize, Deserialize, Debug, Clone)]
+    impl From<CreateReport> for m::Report {
+        fn from(report: CreateReport) -> m::Report {
+            m::Report {
+                _id: ObjectId::new(),
+                user_id: report.user_id,
+                origin: report.origin,
+                report_type: report.report_type,
+                games: report.games,
+                date_requested: Utc::now(),
+                date_completed: None
+            }
+        }
+    }
+
+    pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
+        match origin {
+            m::ReportOrigin::Moderator => 1_000_000i32,
+            m::ReportOrigin::Tournament => 100i32,
+            m::ReportOrigin::Leaderboard => 100i32,
+            m::ReportOrigin::Random => 10i32,
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct CreateFishnetJob {
+        pub game_id: m::GameId,
+        pub analysis_type: m::AnalysisType,
+        pub report_origin: Option<m::ReportOrigin>,
+    }
+
+    impl From<CreateFishnetJob> for m::FishnetJob {
+        fn from(job: CreateFishnetJob) -> m::FishnetJob {
+            m::FishnetJob {
+                _id: ObjectId::new(),
+                game_id: job.game_id,
+                analysis_type: job.analysis_type,
+                precedence: job.report_origin.map(precedence_for_origin).unwrap_or(100_i32),
+                owner: None,
+                date_last_updated: Utc::now(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct CreateGame {
+        pub game_id: m::GameId, // NOTE: I am purposefully renaming this here, from _id. 
+                             //       Maybe I'll regret it later
+        pub emts: Vec<i32>,
+        pub pgn: String,
+        pub black: Option<m::UserId>,
+        pub white: Option<m::UserId>,
+    }
+
+    impl From<CreateGame> for m::Game {
+        fn from(g: CreateGame) -> m::Game {
+            m::Game {
+                _id: g.game_id,
+                emts: g.emts,
+                pgn: g.pgn,
+                black: g.black,
+                white: g.white,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
     pub struct CreateGameAnalysis {
-        pub game_id: GameId,
-        pub analysis: Vec<Eval>,
+        pub game_id: m::GameId,
+        pub analysis: Vec<m::Eval>,
         pub requested_pvs: u8,
-        pub requested_depth: Option<i64>,
-        pub requested_nodes: Option<i64>,
+        pub requested_depth: Option<i32>,
+        pub requested_nodes: Option<i32>,
     }
 
-    impl From<CreateGameAnalysis> for GameAnalysis {
-        fn from(g: CreateGameAnalysis) -> GameAnalysis {
-            GameAnalysis {
+    impl From<CreateGameAnalysis> for m::GameAnalysis {
+        fn from(g: CreateGameAnalysis) -> m::GameAnalysis {
+            m::GameAnalysis {
                 _id: ObjectId::new(),
                 game_id: g.game_id,
                 analysis: g.analysis,
@@ -265,70 +249,50 @@ pub mod model {
         }
     }
 
-    impl From<CreateGameAnalysis> for Document {
-        fn from(game_analysis: CreateGameAnalysis) -> Document {
-            let game_analysis: GameAnalysis = game_analysis.into();
-            to_document(&game_analysis)
-                .expect("should never fail")
-        }
-    }
-}
 
-pub mod api {
-    use mongodb::{
-        bson::{doc, to_document, oid::ObjectId},
-        options::UpdateOptions,
-        results::InsertOneResult,
-    };
-    use futures::future::Future;
-
-    use crate::db::DbConn;
-    use crate::error::{Error, Result};
-    use crate::deepq::model;
-
-    fn inserted_object_id(result: InsertOneResult) -> Result<ObjectId> {
-        Ok(result.inserted_id.as_object_id().ok_or(Error::CreateError)?.clone())
-    }
-
-    pub async fn insert_one_game(db: DbConn, game: model::CreateGame) -> Result<ObjectId> {
+    pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<Bson> {
         // TODO: because games are unique on their game id, we have to do an upsert
+        let game: m::Game = game.into();
         let games_coll = db.database.collection("deepq_games");
         games_coll.update_one(
-            doc!{ "game_id": game.game_id.clone() },
+            doc!{ "_id": game._id.clone() },
             to_document(&game)?,
             Some(UpdateOptions::builder().upsert(true).build())
         ).await?;
         Ok(
             games_coll
-                .find_one(doc!{ "game_id": game.game_id.clone() }, None).await?
+                .find_one(doc!{ "_id": game._id.clone() }, None).await?
                 .ok_or(Error::CreateError)?
-                .get_object_id("_id")?
+                .get("_id")
+                .ok_or(Error::CreateError)?
                 .clone()
         )
     }
 
     pub fn insert_many_games<T>(db: DbConn, games: T)
-        -> impl Iterator<Item=impl Future<Output=Result<ObjectId>>>
+        -> impl Iterator<Item=impl Future<Output=Result<Bson>>>
         where
-            T: Iterator<Item=model::CreateGame> + Clone
+            T: Iterator<Item=CreateGame> + Clone
     {
         games.clone().map(move |game| insert_one_game(db.clone(), game.clone()))
     }
 
-    pub async fn insert_one_report(db: DbConn, report: model::CreateReport) -> Result<ObjectId> {
+    pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
         let reports_coll = db.database.collection("deepq_reports");
-        inserted_object_id(reports_coll.insert_one(report.into(), None).await?)
+        let report: m::Report = report.into();
+        Ok(reports_coll.insert_one(to_document(&report)?, None).await?.inserted_id)
     }
 
-    pub async fn insert_one_fishnet_job(db: DbConn, job: model::CreateFishnetJob) -> Result<ObjectId> {
+    pub async fn insert_one_fishnet_job(db: DbConn, job: CreateFishnetJob) -> Result<Bson> {
         let fishnet_job_col = db.database.collection("deepq_fishnetjobs");
-        inserted_object_id(fishnet_job_col.insert_one(job.into(), None).await?)
+        let job: m::FishnetJob = job.into();
+        Ok(fishnet_job_col.insert_one(to_document(&job)?, None).await?.inserted_id)
     }
 
     pub fn insert_many_fishnet_jobs<'a, T>(db: DbConn, jobs: &'a T)
-        -> impl Iterator<Item=impl Future<Output=Result<ObjectId>>> + 'a
+        -> impl Iterator<Item=impl Future<Output=Result<Bson>>> + 'a
         where
-            T: Iterator<Item=&'a model::CreateFishnetJob> + Clone
+            T: Iterator<Item=&'a CreateFishnetJob> + Clone
     {
         jobs.clone().map(move |job| insert_one_fishnet_job(db.clone(), job.clone()))
     }
