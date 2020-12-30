@@ -15,25 +15,19 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 pub mod model {
+    use derive_more::{Display, From};
     use mongodb::bson::{oid::ObjectId, Bson, DateTime};
     use serde::{Deserialize, Serialize};
 
     use crate::deepq::model::{GameId, UserId};
 
-    #[derive(Serialize, Deserialize, Debug, Clone)]
+    #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
     pub struct Key(pub String);
 
-    impl From<String> for Key {
-        fn from(key: String) -> Self {
-            Key(key)
+    impl From<Key> for Bson {
+        fn from(k: Key) -> Bson {
+            Bson::String(k.to_string().to_lowercase())
         }
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct APIUser {
-        pub key: Key,
-        pub user: Option<UserId>,
-        pub name: String,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
@@ -47,6 +41,14 @@ pub mod model {
         fn from(at: AnalysisType) -> Bson {
             Bson::String(at.to_string().to_lowercase())
         }
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct ApiUser {
+        pub key: Key,
+        pub user: Option<UserId>,
+        pub name: String,
+        pub perms: Vec<AnalysisType>,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -66,6 +68,7 @@ pub mod api {
     use mongodb::bson::{
         doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
     };
+    use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
 
     use crate::db::DbConn;
     use crate::deepq::model::GameId;
@@ -92,8 +95,8 @@ pub mod api {
         }
     }
 
-    pub async fn get_api_user(db: DbConn, key: &m::Key) -> Result<Option<m::APIUser>> {
-        let col = db.database.collection("deepq_token");
+    pub async fn get_api_user(db: DbConn, key: &m::Key) -> Result<Option<m::ApiUser>> {
+        let col = db.database.collection("deepq_apiuser");
         Ok(col
             .find_one(doc! {"key": key.0.clone()}, None)
             .await?
@@ -124,10 +127,24 @@ pub mod api {
             .map(move |job| insert_one_job(db.clone(), job.clone()))
     }
 
-    #[derive(Debug, Clone)]
-    pub struct JobRequest {
+    pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Job>> {
+        let job_col = &db.database.collection("deepq_fishnetjobs");
+        let api_user = &api_user;
+        Ok(job_col
+            .find_one_and_update(
+                doc! {
+                    "owner": Bson::Null,
+                    "analysis_type": doc!{ "$in": Bson::Array(api_user.perms.iter().map(Into::into).collect()) },
+                },
+                UpdateModifications::Document(doc! {"$set": {"owner": api_user.key.clone()}}),
+                FindOneAndUpdateOptions::builder()
+                    .sort(doc! {"precedence": -1, "date_last_updated": 1})
+                    .build(),
+            )
+            .await?
+            .map(from_document)
+            .transpose()?)
     }
-    
 }
 
 pub mod filters {
@@ -143,6 +160,7 @@ pub mod filters {
     };
 
     use crate::db::DbConn;
+    use crate::deepq::api::find_game;
     use crate::error::Error;
     use crate::fishnet::api;
     use crate::fishnet::model as m;
@@ -211,7 +229,7 @@ pub mod filters {
     async fn get_user_from_key(
         db: DbConn,
         key: &m::Key,
-    ) -> StdResult<Option<m::APIUser>, Rejection> {
+    ) -> StdResult<Option<m::ApiUser>, Rejection> {
         Ok(api::get_api_user(db, key).await?)
     }
 
@@ -220,24 +238,53 @@ pub mod filters {
     async fn authorize_api_request_impl(
         db: DbConn,
         request_info: FishnetRequest,
-    ) -> StdResult<m::APIUser, Rejection> {
+    ) -> StdResult<m::ApiUser, Rejection> {
         get_user_from_key(db, &request_info.fishnet.api_key)
             .await?
             .ok_or(reject::custom(Error::Unauthorized))
     }
 
-    /// extract an APIUser from the json body request
+    /// extract an ApiUser from the json body request
     fn extract_api_user(
         db: DbConn,
-    ) -> impl Filter<Extract = (m::APIUser,), Error = Rejection> + Clone {
+    ) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json())
             .and_then(authorize_api_request_impl)
     }
 
-    async fn acquire_job(_db: DbConn, _api_user: m::APIUser) -> StdResult<Option<Job>, Rejection> {
-        return Ok(None);
+    async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
+        match api::assign_job(db.clone(), api_user).await? {
+            Some(job) => {
+                // TODO: This doesn't properly unassign the job in the case of error
+                let game = find_game(db, job.game_id.clone()).await?;
+                // TODO: eventually this fen should come from the actual game.
+                let position: Fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                    .parse()
+                    .expect("this cannot fail");
+                Ok(game.map(|game| {
+                    Job {
+                        game_id: job.game_id.to_string(),
+                        position: position,
+                        variant: Variant::Standard,
+                        // TODO: Figure out what these should be.
+                        skip_positions: Vec::new(),
+                        moves: game.pgn,
+                        work: WorkInfo {
+                            id: job._id.to_string(),
+                            _type: WorkType::Analysis,
+                            nodes: Nodes {
+                                // TODO: Grab these from somewhere
+                                nnue: 2_000_000_u64,
+                                classical: 4_000_000_u64,
+                            },
+                        },
+                    }
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
