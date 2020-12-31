@@ -34,13 +34,18 @@ pub mod model {
         }
     }
 
+    // TODO: not sure if I should be specific like this,
+    //       or if I should have two: SinglePV and MultiPV and just
+    //       prescribe the appropriate depth/node values otherwise?
+    //       I'd like it if Irwin and CR were unified, and user/system
+    //       analysis should also be unified.
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
     #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
-        UserAnalysis,
-        SystemAnalysis,
-        IrwinDeep,
-        CRDeep,
+        UserAnalysis, // User requested analysis, single-pv
+        SystemAnalysis, // System requested analysis, single-pv
+        IrwinDeep, // Irwin analysis, multipv, complete game, deeper
+        CRDeep, // CR analysis, multipv, skips opening, deeper.
     }
 
     impl From<AnalysisType> for Bson {
