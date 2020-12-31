@@ -182,7 +182,7 @@ pub mod api {
     }
 }
 
-pub mod filters {
+pub mod http {
     use std::convert::Infallible;
     use std::result::Result as StdResult;
     use std::str::FromStr;

@@ -56,7 +56,7 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     info!("Starting server");
 
-    let app = fishnet::filters::mount(db.clone());
+    let app = fishnet::http::mount(db.clone());
 
     warp::serve(warp::path("fishnet").and(app))
         .run(([127, 0, 0, 1], 3030))
