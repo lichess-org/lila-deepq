@@ -298,22 +298,13 @@ pub mod http {
         }
     }
 
-    async fn get_user_from_key(
-        db: DbConn,
-        key: m::Key,
-    ) -> StdResult<Option<m::ApiUser>, Rejection> {
-        Ok(api::get_api_user(db, key).await?)
-    }
-
     // NOTE: This is not a lambda because async lambdas
     //      are unstable.
-    async fn authorize_api_request_impl<T>(
-        db: DbConn,
-        key: T,
-    ) -> StdResult<m::ApiUser, Rejection>
-        where T: Into<m::Key>
+    async fn authorize_api_request_impl<T>(db: DbConn, key: T) -> StdResult<m::ApiUser, Rejection>
+    where
+        T: Into<m::Key>,
     {
-        get_user_from_key(db, key.into())
+        api::get_api_user(db, key.into())
             .await?
             .ok_or(reject::custom(HttpError::Unauthorized))
     }
@@ -329,11 +320,8 @@ pub mod http {
     }
 
     /// extract a m::Key from the Authorization header
-    fn extract_key_from_header()
-        -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone
-    {
-        warp::any()
-            .and(warp::header::<HeaderKey>("authorization"))
+    fn extract_key_from_header() -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone {
+        warp::any().and(warp::header::<HeaderKey>("authorization"))
     }
 
     /// extract an m::ApiUser from the Authorization header
@@ -424,7 +412,7 @@ pub mod http {
     }
 
     async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
-        get_user_from_key(db, key.into())
+        api::get_api_user(db, key.into())
             .await?
             .ok_or(reject::not_found())
             .map(|_| String::new())
@@ -480,13 +468,17 @@ pub mod http {
     }
 
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-        let require_valid_key_in_body = require_valid_key_in_body(db.clone());
-        let require_valid_key_in_header = require_valid_key_in_header(db.clone());
+
+        let require_valid_key = warp::any()
+            .and(require_valid_key_in_body(db.clone()))
+            .or(require_valid_key_in_header(db.clone()))
+            .unify();
+
         let db = warp::any().map(move || db.clone());
 
         let acquire = warp::path("acquire")
             .and(db.clone())
-            .and(require_valid_key_in_body)
+            .and(require_valid_key.clone())
             .and_then(acquire_job)
             .and_then(json_object_or_no_content::<Job>);
 
@@ -497,9 +489,13 @@ pub mod http {
 
         let status = warp::path("status")
             .and(db.clone())
-            .and(require_valid_key_in_header)
+            .and(require_valid_key.clone())
             .map(|_, _| "");
 
-        acquire.or(valid_key).or(status).recover(fishnet_recover).boxed()
+        acquire
+            .or(valid_key)
+            .or(status)
+            .recover(fishnet_recover)
+            .boxed()
     }
 }
