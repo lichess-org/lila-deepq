@@ -124,11 +124,11 @@ pub mod model {
 
 pub mod api {
     use chrono::prelude::*;
-    use futures::future::{join_all, Future};
+    use futures::future::Future;
     use mongodb::bson::{
         doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
     };
-    use mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, UpdateModifications};
+    use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
     use serde::Serialize;
     use std::convert::TryInto;
 
@@ -258,23 +258,22 @@ pub mod api {
 
     pub fn key_status(api_user: Option<m::ApiUser>) -> Option<KeyStatus> {
         // TODO: Add in appropriate tracking for invalidated keys.
-        api_user.map(|api_user| KeyStatus::Active)
+        api_user.map(|_| KeyStatus::Active)
     }
 }
 
 pub mod http {
-    use std::convert::Infallible;
-    use std::marker::Send;
-    use std::result::Result as StdResult;
     use std::str::FromStr;
+    use std::convert::Infallible;
+    use std::result::Result as StdResult;
 
     use serde::{Deserialize, Serialize};
-    use serde_with::{serde_as, DisplayFromStr};
+    use serde_with::{serde_as, DisplayFromStr, skip_serializing_none};
     use shakmaty::fen::Fen;
     use warp::{
         filters::BoxedFilter,
         http, reject,
-        reply::{self, Json, Reply, WithStatus},
+        reply::{self, Reply},
         Filter, Rejection,
     };
 
@@ -283,6 +282,7 @@ pub mod http {
     use crate::error::{Error, HttpError};
     use crate::fishnet::api;
     use crate::fishnet::model as m;
+    use crate::http::{recover, unauthorized, json_object_or_no_content, required_parameter};
 
     // TODO: make this complete for all of the variant types we should support.
     #[derive(Serialize, Deserialize, Debug)]
@@ -388,24 +388,6 @@ pub mod http {
         Ok(api::get_api_user(db, key.into()).await?)
     }
 
-    /// Unauthorized rejection
-    fn unauthorized() -> Rejection {
-        warp::reject::custom(HttpError::Unauthorized)
-    }
-
-    /// extract an ApiUser from the json body request
-    fn required_parameter<'a, F, E, V>(
-        filter: F,
-        err: &'a E,
-    ) -> impl Filter<Extract = (V,), Error = Rejection> + Clone + 'a
-    where
-        F: Filter<Extract = (Option<V>,), Error = Infallible> + Clone + 'a,
-        V: Send + Sync,
-        E: Fn() -> Rejection + Clone + Send + Sync + 'a
-    {
-        filter.and_then(move |v: Option<V>| async move { v.ok_or(err()) })
-    }
-
     /// extract an ApiUser from the json body request
     fn api_user_from_body(
         db: DbConn,
@@ -416,7 +398,7 @@ pub mod http {
             .and_then(api_user_for_key)
     }
 
-    /// extract a m::Key from the Authorization header
+    /// extract a HeaderKey from the Authorization header
     fn extract_key_from_header() -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone {
         warp::any().and(warp::header::<HeaderKey>("authorization"))
     }
@@ -521,6 +503,7 @@ pub mod http {
             .map(|_| String::new())
     }
 
+    #[skip_serializing_none]
     #[derive(Serialize)]
     struct FishnetStatus {
         analysis: api::QStatus,
@@ -536,58 +519,6 @@ pub mod http {
             deep: api::q_status(db.clone(), m::AnalysisType::Deep).await?,
             key: api::key_status(api_user.clone())
         })
-    }
-
-    async fn json_object_or_no_content<T: Serialize>(
-        value: Option<T>,
-    ) -> StdResult<WithStatus<Json>, Rejection> {
-        value.map_or(
-            Ok(reply::with_status(
-                reply::json(&String::new()),
-                http::StatusCode::NO_CONTENT,
-            )),
-            |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK)),
-        )
-    }
-
-    /// An API error serializable to JSON.
-    #[derive(Serialize)]
-    struct ErrorMessage {
-        code: u16,
-        message: String,
-    }
-
-    // This function receives a `Rejection` and tries to return a custom
-    // value, otherwise simply passes the rejection along.
-    async fn fishnet_recover(err: Rejection) -> Result<impl Reply, Infallible> {
-        let code;
-        let message;
-
-        if err.is_not_found() {
-            code = http::StatusCode::NOT_FOUND;
-            message = "NOT_FOUND";
-        } else if let Some(HttpError::Unauthorized) = err.find() {
-            code = http::StatusCode::UNAUTHORIZED;
-            message = "UNAUTHORIZED";
-        } else if let Some(HttpError::Forbidden) = err.find() {
-            code = http::StatusCode::FORBIDDEN;
-            message = "FORBIDDEN";
-        } else if let Some(_) = err.find::<warp::reject::MethodNotAllowed>() {
-            code = http::StatusCode::METHOD_NOT_ALLOWED;
-            message = "METHOD_NOT_ALLOWED";
-        } else {
-            // We should have expected this... Just log and say its a 500
-            eprintln!("unhandled rejection: {:?}", err);
-            code = http::StatusCode::INTERNAL_SERVER_ERROR;
-            message = "UNHANDLED_REJECTION";
-        }
-
-        let json = warp::reply::json(&ErrorMessage {
-            code: code.as_u16(),
-            message: message.into(),
-        });
-
-        Ok(warp::reply::with_status(json, code))
     }
 
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
@@ -631,7 +562,7 @@ pub mod http {
         acquire
             .or(valid_key)
             .or(status)
-            .recover(fishnet_recover)
+            .recover(recover)
             .boxed()
     }
 }

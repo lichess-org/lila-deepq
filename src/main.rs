@@ -19,6 +19,7 @@ pub mod db;
 pub mod deepq;
 pub mod error;
 pub mod fishnet;
+pub mod http;
 //mod irwin;
 //mod lichess;
 

@@ -20,4 +20,5 @@ pub mod deepq;
 pub mod error;
 pub mod fishnet;
 pub mod irwin;
+pub mod http;
 pub mod lichess;
