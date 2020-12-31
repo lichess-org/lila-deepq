@@ -15,15 +15,18 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 pub mod model {
+    use chrono::prelude::*;
     use derive_more::{Display, From};
     use mongodb::{
-        bson::{oid::ObjectId, Bson, DateTime},
+        bson::{doc, from_document, oid::ObjectId, Bson, DateTime},
+        options::FindOneOptions,
         Collection,
     };
     use serde::{Deserialize, Serialize};
 
     use crate::db::DbConn;
     use crate::deepq::model::{GameId, UserId};
+    use crate::error::Result;
 
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
     pub struct Key(pub String);
@@ -42,9 +45,9 @@ pub mod model {
     #[derive(Serialize, Deserialize, Debug, Clone, strum_macros::ToString)]
     #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
-        UserAnalysis, // User requested analysis, single-pv
+        UserAnalysis,   // User requested analysis, single-pv
         SystemAnalysis, // System requested analysis, single-pv
-        Deep, // Irwin analysis, multipv, complete game, deeper
+        Deep,           // Irwin analysis, multipv, complete game, deeper
     }
 
     impl From<AnalysisType> for Bson {
@@ -81,17 +84,53 @@ pub mod model {
         pub fn coll(db: DbConn) -> Collection {
             db.database.collection("deepq_fishnetjobs")
         }
+
+        pub fn seconds_since_created(self: &Self) -> i64 {
+            Utc::now().timestamp() - self.date_last_updated.timestamp()
+        }
+
+        pub async fn acquired_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {
+            let filter = doc! {
+                "owner": { "$ne": Bson::Null },
+                "analysis_type": { "$eq": analysis_type },
+            };
+            Ok(Job::coll(db.clone()).count_documents(filter, None).await?)
+        }
+
+        pub async fn queued_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {
+            let filter = doc! {
+                "owner": { "$eq": Bson::Null },
+                "analysis_type": { "$eq": analysis_type },
+            };
+            Ok(Job::coll(db.clone()).count_documents(filter, None).await?)
+        }
+
+        pub async fn oldest_job(db: DbConn, analysis_type: AnalysisType) -> Result<Option<Job>> {
+            let filter = doc! {
+                "owner": { "$eq": Bson::Null },
+                "analysis_type": { "$eq": analysis_type },
+            };
+            let options = FindOneOptions::builder()
+                .sort(doc! { "date_last_updated": -1 })
+                .build();
+            Ok(Job::coll(db.clone())
+                .find_one(filter, options)
+                .await?
+                .map(from_document::<Job>)
+                .transpose()?)
+        }
     }
 }
 
 pub mod api {
     use chrono::prelude::*;
-    use futures::future::{Future, join_all};
+    use futures::future::{join_all, Future};
     use mongodb::bson::{
         doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
     };
-    use mongodb::options::{FindOneOptions, FindOneAndUpdateOptions, UpdateModifications};
+    use mongodb::options::{FindOneAndUpdateOptions, FindOneOptions, UpdateModifications};
     use serde::Serialize;
+    use std::convert::TryInto;
 
     use crate::db::DbConn;
     use crate::deepq::model::GameId;
@@ -194,38 +233,38 @@ pub mod api {
     }
 
     pub async fn q_status(db: DbConn, analysis_type: m::AnalysisType) -> Result<QStatus> {
-        /*let results = join_all(vec![
-            m::Job::coll(db)
-                .count_documents(
-                    doc!{"owner": doc!{ "$ne": Bson::Null }},
-                    None
-                ),
-            m::Job::coll(db)
-                .count_documents(
-                    doc!{"owner": doc!{ "$eq": Bson::Null }},
-                    None
-                ),
-            m::Job::coll(db)
-                .find_one(
-                    doc!{"owner": doc!{ "$eq": Bson::Null }},
-                    FindOneOptions::builder()
-                        .sort(doc!{ "date_last_updated": -1 })
-                        .build()
-                ),
-        ]).await;*/
         Ok(QStatus {
-            acquired: 0,
-            queued: 0,
-            oldest: 0,
+            acquired: m::Job::acquired_jobs(db.clone(), analysis_type.clone())
+                .await?
+                .try_into()?,
+            queued: m::Job::queued_jobs(db.clone(), analysis_type.clone())
+                .await?
+                .try_into()?,
+            oldest: m::Job::oldest_job(db.clone(), analysis_type.clone())
+                .await?
+                .map(|job| job.seconds_since_created())
+                .unwrap_or(0_i64)
+                .try_into()?,
         })
-
     }
 
+    #[derive(Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum KeyStatus {
+        Unknown,
+        Active,
+        Inactive,
+    }
 
+    pub fn key_status(api_user: Option<m::ApiUser>) -> Option<KeyStatus> {
+        // TODO: Add in appropriate tracking for invalidated keys.
+        api_user.map(|api_user| KeyStatus::Active)
+    }
 }
 
 pub mod http {
     use std::convert::Infallible;
+    use std::marker::Send;
     use std::result::Result as StdResult;
     use std::str::FromStr;
 
@@ -342,23 +381,39 @@ pub mod http {
 
     // NOTE: This is not a lambda because async lambdas
     //      are unstable.
-    async fn authorize_api_request_impl<T>(db: DbConn, key: T) -> StdResult<m::ApiUser, Rejection>
+    async fn api_user_for_key<T>(db: DbConn, key: T) -> StdResult<Option<m::ApiUser>, Rejection>
     where
         T: Into<m::Key>,
     {
-        api::get_api_user(db, key.into())
-            .await?
-            .ok_or(reject::custom(HttpError::Unauthorized))
+        Ok(api::get_api_user(db, key.into()).await?)
+    }
+
+    /// Unauthorized rejection
+    fn unauthorized() -> Rejection {
+        warp::reject::custom(HttpError::Unauthorized)
     }
 
     /// extract an ApiUser from the json body request
-    fn require_valid_key_in_body(
+    fn required_parameter<'a, F, E, V>(
+        filter: F,
+        err: &'a E,
+    ) -> impl Filter<Extract = (V,), Error = Rejection> + Clone + 'a
+    where
+        F: Filter<Extract = (Option<V>,), Error = Infallible> + Clone + 'a,
+        V: Send + Sync,
+        E: Fn() -> Rejection + Clone + Send + Sync + 'a
+    {
+        filter.and_then(move |v: Option<V>| async move { v.ok_or(err()) })
+    }
+
+    /// extract an ApiUser from the json body request
+    fn api_user_from_body(
         db: DbConn,
-    ) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
+    ) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(warp::body::json::<FishnetRequest>())
-            .and_then(authorize_api_request_impl)
+            .and_then(api_user_for_key)
     }
 
     /// extract a m::Key from the Authorization header
@@ -367,13 +422,19 @@ pub mod http {
     }
 
     /// extract an m::ApiUser from the Authorization header
-    fn require_valid_key_in_header(
+    fn api_user_from_header(
         db: DbConn,
-    ) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
+    ) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
             .and(extract_key_from_header())
-            .and_then(authorize_api_request_impl)
+            .and_then(api_user_for_key)
+    }
+
+    /// extract an m::ApiUser from the Authorization header
+    fn no_api_user() -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
+        warp::any()
+            .map(move || None)
     }
 
     // TODO: get this from config or env? or lila? (probably lila, tbh)
@@ -465,13 +526,15 @@ pub mod http {
         analysis: api::QStatus,
         system: api::QStatus,
         deep: api::QStatus,
+        key: Option<api::KeyStatus>
     }
 
-    async fn fishnet_status(db: DbConn, _api_user: m::ApiUser) -> StdResult<FishnetStatus, Rejection> {
-        Ok(FishnetStatus{
+    async fn fishnet_status(db: DbConn, api_user: Option<m::ApiUser>) -> StdResult<FishnetStatus, Rejection> {
+        Ok(FishnetStatus {
             analysis: api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?,
             system: api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?,
             deep: api::q_status(db.clone(), m::AnalysisType::Deep).await?,
+            key: api::key_status(api_user.clone())
         })
     }
 
@@ -509,6 +572,9 @@ pub mod http {
         } else if let Some(HttpError::Forbidden) = err.find() {
             code = http::StatusCode::FORBIDDEN;
             message = "FORBIDDEN";
+        } else if let Some(_) = err.find::<warp::reject::MethodNotAllowed>() {
+            code = http::StatusCode::METHOD_NOT_ALLOWED;
+            message = "METHOD_NOT_ALLOWED";
         } else {
             // We should have expected this... Just log and say its a 500
             eprintln!("unhandled rejection: {:?}", err);
@@ -525,18 +591,22 @@ pub mod http {
     }
 
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-
-        let require_valid_key = warp::any()
-            .and(require_valid_key_in_body(db.clone()))
-            .or(require_valid_key_in_header(db.clone()))
+        let authorization_possible = warp::any()
+            .and(api_user_from_body(db.clone()))
+            .or(api_user_from_header(db.clone()))
+            .unify()
+            .or(no_api_user())
             .unify();
+
+        let authorization_required =
+            required_parameter(authorization_possible.clone(), &unauthorized);
 
         let db = warp::any().map(move || db.clone());
 
         let acquire = warp::path("acquire")
             .and(warp::filters::method::post())
             .and(db.clone())
-            .and(require_valid_key.clone())
+            .and(authorization_required.clone())
             .and_then(acquire_job)
             .and_then(json_object_or_no_content::<Job>);
 
@@ -549,16 +619,14 @@ pub mod http {
         let status = warp::path("status")
             .and(warp::filters::method::get())
             .and(db.clone())
-            .and(require_valid_key.clone())
+            .and(authorization_possible.clone())
             .and_then(fishnet_status)
-            .map_or(|val| {
+            .map(|status| {
                 Ok(reply::with_status(
-                    reply::json(&String::new()),
-                    http::StatusCode::NO_CONTENT,
-                )),
-                |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK)),
-            }
-            )
+                    reply::json(&status),
+                    http::StatusCode::OK,
+                ))
+            });
 
         acquire
             .or(valid_key)
