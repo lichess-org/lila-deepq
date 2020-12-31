@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-mod db;
-mod deepq;
-mod error;
-mod fishnet;
+pub mod db;
+pub mod deepq;
+pub mod error;
+pub mod fishnet;
 //mod irwin;
 //mod lichess;
 
