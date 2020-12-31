@@ -429,6 +429,11 @@ pub mod http {
             .map(|_| String::new())
     }
 
+    async fn fishnet_status(db: DbConn, ApiUser: String) -> StdResult<String, Rejection> {
+        // TODO: implement me - https://github.com/niklasf/fishnet/blob/master/doc/protocol.md#status
+        Ok("TODO")
+    }
+
     async fn json_object_or_no_content<T: Serialize>(
         value: Option<T>,
     ) -> StdResult<WithStatus<Json>, Rejection> {
@@ -501,7 +506,7 @@ pub mod http {
         let status = warp::path("status")
             .and(db.clone())
             .and(require_valid_key.clone())
-            .map(|_, _| "");
+            .map(fishnet_status)
 
         acquire
             .or(valid_key)
