@@ -20,7 +20,7 @@ use std::io::{Error, ErrorKind};
 
 use dotenv::dotenv;
 use futures::StreamExt;
-use log::{info, error};
+use log::{error, info, warn};
 use mongodb::Client;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::stream_reader;
@@ -84,8 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-
-        info!("Disconnected, sleeping for 5s...");
+        warn!("Disconnected, sleeping for 5s...");
         delay_for(Duration::from_millis(5000)).await;
     }
 }
