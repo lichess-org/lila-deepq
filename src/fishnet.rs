@@ -38,6 +38,7 @@ pub mod model {
     #[serde(rename_all = "lowercase")]
     pub enum AnalysisType {
         UserAnalysis,
+        SystemAnalysis,
         IrwinDeep,
         CRDeep,
     }
@@ -342,6 +343,10 @@ pub mod http {
                 nnue: 2_250_000_u64,
                 classical: 4_050_000_u64,
             },
+            m::AnalysisType::SystemAnalysis => Nodes {
+                nnue: 2_250_000_u64,
+                classical: 4_050_000_u64,
+            },
             m::AnalysisType::CRDeep => Nodes {
                 nnue: 2_500_000_u64,
                 classical: 4_500_000_u64,
@@ -370,6 +375,7 @@ pub mod http {
         match job.analysis_type {
             // TODO: what is the default right now for lila's fishnet queue?
             m::AnalysisType::UserAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            m::AnalysisType::SystemAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             m::AnalysisType::CRDeep => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             m::AnalysisType::IrwinDeep => Vec::new(),
         }
