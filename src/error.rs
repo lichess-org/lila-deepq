@@ -27,6 +27,28 @@ use warp::reject;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+pub enum HttpError {
+    #[error("Unauthorized")]
+    MalformedHeader,
+
+    #[error("Unauthorized")]
+    Unauthorized,
+
+    #[error("Forbidden")]
+    Forbidden,
+
+}
+
+impl reject::Reject for HttpError {}
+
+impl From<HttpError> for reject::Rejection {
+    fn from(e: HttpError) -> Self {
+        // TODO: turn these into the appropriate responses.
+        reject::custom(e)
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum Error {
     // #[error("Serde Deserialization Error")]
     // SerdeDeserializationError(#[from] _SerdeDeError),
@@ -45,11 +67,11 @@ pub enum Error {
     #[error("Mongo Database Error")]
     MongoDBError(#[from] _MongoDBError),
 
+    #[error("Mongo Database Error")]
+    HttpError(#[from] HttpError),
+
     #[error("Unable to deserialize something")]
     DeserializationError,
-
-    #[error("Unauthorized")]
-    Unauthorized,
 
     #[error("unknown data store error")]
     Unknown,

@@ -16,7 +16,10 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 pub mod model {
     use derive_more::{Display, From};
-    use mongodb::{ Collection, bson::{oid::ObjectId, Bson, DateTime}};
+    use mongodb::{
+        bson::{oid::ObjectId, Bson, DateTime},
+        Collection,
+    };
     use serde::{Deserialize, Serialize};
 
     use crate::db::DbConn;
@@ -77,6 +80,7 @@ pub mod model {
 }
 
 pub mod api {
+
     use chrono::prelude::*;
     use futures::future::Future;
     use mongodb::bson::{
@@ -109,7 +113,7 @@ pub mod api {
         }
     }
 
-    pub async fn get_api_user(db: DbConn, key: &m::Key) -> Result<Option<m::ApiUser>> {
+    pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>> {
         let col = m::ApiUser::coll(db);
         Ok(col
             .find_one(doc! {"key": key.0.clone()}, None)
@@ -162,9 +166,9 @@ pub mod api {
     pub async fn unassign_job(db: DbConn, id: ObjectId) -> Result<()> {
         m::Job::coll(db)
             .update_one(
-                doc!{ "_id": id },
-                UpdateModifications::Document(doc!{"owner": Bson::Null}),
-                None
+                doc! { "_id": id },
+                UpdateModifications::Document(doc! {"owner": Bson::Null}),
+                None,
             )
             .await?;
         Ok(())
@@ -172,17 +176,20 @@ pub mod api {
 
     pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
         m::Job::coll(db)
-            .delete_one(doc!{ "_id": id }, None)
+            .delete_one(doc! { "_id": id }, None)
             .await?;
         Ok(())
     }
 }
 
 pub mod filters {
+    use std::convert::Infallible;
+    use std::result::Result as StdResult;
+    use std::str::FromStr;
+
     use serde::{Deserialize, Serialize};
     use serde_with::{serde_as, DisplayFromStr};
     use shakmaty::fen::Fen;
-    use std::result::Result as StdResult;
     use warp::{
         filters::BoxedFilter,
         http, reject,
@@ -192,7 +199,7 @@ pub mod filters {
 
     use crate::db::DbConn;
     use crate::deepq::api::{find_game, starting_position};
-    use crate::error::Error;
+    use crate::error::{Error, HttpError};
     use crate::fishnet::api;
     use crate::fishnet::model as m;
 
@@ -223,6 +230,12 @@ pub mod filters {
         fishnet: RequestInfo,
     }
 
+    impl From<FishnetRequest> for m::Key {
+        fn from(request: FishnetRequest) -> m::Key {
+            request.fishnet.api_key
+        }
+    }
+
     #[derive(Serialize, Deserialize, Debug)]
     pub struct AcquireRequest {
         fishnet: RequestInfo,
@@ -246,7 +259,7 @@ pub mod filters {
         _type: WorkType,
         id: String,
         nodes: Nodes,
-        analysis: Option<Analysis>
+        analysis: Option<Analysis>,
     }
 
     #[serde_as]
@@ -264,31 +277,71 @@ pub mod filters {
         skip_positions: Vec<u8>,
     }
 
+    #[derive(Debug)]
+    pub struct HeaderKey(pub m::Key);
+
+    impl FromStr for HeaderKey {
+        type Err = Error;
+
+        fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+            Ok(HeaderKey(m::Key(s
+                .strip_prefix("Bearer ")
+                .ok_or(HttpError::MalformedHeader)?
+                .to_string())))
+        }
+    }
+
+    impl From<HeaderKey> for m::Key {
+        fn from(hk: HeaderKey) -> m::Key {
+            hk.0
+        }
+    }
+
     async fn get_user_from_key(
         db: DbConn,
-        key: &m::Key,
+        key: m::Key,
     ) -> StdResult<Option<m::ApiUser>, Rejection> {
         Ok(api::get_api_user(db, key).await?)
     }
 
     // NOTE: This is not a lambda because async lambdas
     //      are unstable.
-    async fn authorize_api_request_impl(
+    async fn authorize_api_request_impl<T>(
         db: DbConn,
-        request_info: FishnetRequest,
-    ) -> StdResult<m::ApiUser, Rejection> {
-        get_user_from_key(db, &request_info.fishnet.api_key)
+        key: T,
+    ) -> StdResult<m::ApiUser, Rejection>
+        where T: Into<m::Key>
+    {
+        get_user_from_key(db, key.into())
             .await?
-            .ok_or(reject::custom(Error::Unauthorized))
+            .ok_or(reject::custom(HttpError::Unauthorized))
     }
 
     /// extract an ApiUser from the json body request
-    fn extract_api_user(
+    fn require_valid_key_in_body(
         db: DbConn,
     ) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
         warp::any()
             .map(move || db.clone())
-            .and(warp::body::json())
+            .and(warp::body::json::<FishnetRequest>())
+            .and_then(authorize_api_request_impl)
+    }
+
+    /// extract a m::Key from the Authorization header
+    fn extract_key_from_header()
+        -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone
+    {
+        warp::any()
+            .and(warp::header::<HeaderKey>("authorization"))
+    }
+
+    /// extract an m::ApiUser from the Authorization header
+    fn require_valid_key_in_header(
+        db: DbConn,
+    ) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
+        warp::any()
+            .map(move || db.clone())
+            .and(extract_key_from_header())
             .and_then(authorize_api_request_impl)
     }
 
@@ -307,7 +360,7 @@ pub mod filters {
             m::AnalysisType::IrwinDeep => Nodes {
                 nnue: 2_500_000_u64,
                 classical: 4_500_000_u64,
-            }
+            },
         }
     }
 
@@ -319,7 +372,7 @@ pub mod filters {
                 depth: 40,
                 multipv: false,
             }),
-            _ => None
+            _ => None,
         }
     }
 
@@ -329,7 +382,7 @@ pub mod filters {
             // TODO: what is the default right now for lila's fishnet queue?
             m::AnalysisType::UserAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             m::AnalysisType::CRDeep => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            m::AnalysisType::IrwinDeep => Vec::new()
+            m::AnalysisType::IrwinDeep => Vec::new(),
         }
     }
 
@@ -349,30 +402,28 @@ pub mod filters {
                         api::delete_job(db.clone(), job._id).await?;
                         // TODO: I don't yet understand recursion in an async function in Rust.
                         None // acquire_job(db.clone(), api_user.clone())?
-                    },
-                    Some(game) => {
-                        Some(Job {
-                            game_id: job.game_id.to_string(),
-                            position: starting_position(game.clone()),
-                            variant: Variant::Standard,
-                            skip_positions: skip_positions_for_job(&job),
-                            moves: game.pgn,
-                            work: WorkInfo {
-                                id: job._id.to_string(),
-                                _type: WorkType::Analysis,
-                                nodes: nodes_for_job(&job),
-                                analysis: analysis_for_job(&job),
-                            },
-                        })
                     }
+                    Some(game) => Some(Job {
+                        game_id: job.game_id.to_string(),
+                        position: starting_position(game.clone()),
+                        variant: Variant::Standard,
+                        skip_positions: skip_positions_for_job(&job),
+                        moves: game.pgn,
+                        work: WorkInfo {
+                            id: job._id.to_string(),
+                            _type: WorkType::Analysis,
+                            nodes: nodes_for_job(&job),
+                            analysis: analysis_for_job(&job),
+                        },
+                    }),
                 }
-            },
-            None => None
+            }
+            None => None,
         })
     }
 
     async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
-        get_user_from_key(db, &key.into())
+        get_user_from_key(db, key.into())
             .await?
             .ok_or(reject::not_found())
             .map(|_| String::new())
@@ -390,13 +441,51 @@ pub mod filters {
         )
     }
 
+    /// An API error serializable to JSON.
+    #[derive(Serialize)]
+    struct ErrorMessage {
+        code: u16,
+        message: String,
+    }
+
+    // This function receives a `Rejection` and tries to return a custom
+    // value, otherwise simply passes the rejection along.
+    async fn fishnet_recover(err: Rejection) -> Result<impl Reply, Infallible> {
+        let code;
+        let message;
+
+        if err.is_not_found() {
+            code = http::StatusCode::NOT_FOUND;
+            message = "NOT_FOUND";
+        } else if let Some(HttpError::Unauthorized) = err.find() {
+            code = http::StatusCode::UNAUTHORIZED;
+            message = "UNAUTHORIZED";
+        } else if let Some(HttpError::Forbidden) = err.find() {
+            code = http::StatusCode::FORBIDDEN;
+            message = "FORBIDDEN";
+        } else {
+            // We should have expected this... Just log and say its a 500
+            eprintln!("unhandled rejection: {:?}", err);
+            code = http::StatusCode::INTERNAL_SERVER_ERROR;
+            message = "UNHANDLED_REJECTION";
+        }
+
+        let json = warp::reply::json(&ErrorMessage {
+            code: code.as_u16(),
+            message: message.into(),
+        });
+
+        Ok(warp::reply::with_status(json, code))
+    }
+
     pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-        let extract_api_user = extract_api_user(db.clone());
+        let require_valid_key_in_body = require_valid_key_in_body(db.clone());
+        let require_valid_key_in_header = require_valid_key_in_header(db.clone());
         let db = warp::any().map(move || db.clone());
 
         let acquire = warp::path("acquire")
             .and(db.clone())
-            .and(extract_api_user)
+            .and(require_valid_key_in_body)
             .and_then(acquire_job)
             .and_then(json_object_or_no_content::<Job>);
 
@@ -405,6 +494,11 @@ pub mod filters {
             .and(warp::path::param())
             .and_then(check_key_validity);
 
-        acquire.or(valid_key).boxed()
+        let status = warp::path("status")
+            .and(db.clone())
+            .and(require_valid_key_in_header)
+            .map(|_, _| "");
+
+        acquire.or(valid_key).or(status).recover(fishnet_recover).boxed()
     }
 }

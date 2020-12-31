@@ -37,6 +37,8 @@ use crate::db::DbConn;
 use dotenv::dotenv;
 use mongodb::Client;
 
+use warp::Filter;
+
 #[tokio::main]
 async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -56,7 +58,9 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     let app = fishnet::filters::mount(db.clone());
 
-    warp::serve(app).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(warp::path("fishnet").and(app))
+        .run(([127, 0, 0, 1], 3030))
+        .await;
 
     Ok(())
 }
