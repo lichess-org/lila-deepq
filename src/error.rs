@@ -20,6 +20,7 @@ use mongodb::bson::{
     ser::Error as _BsonSeError,
 };
 use mongodb::error::Error as _MongoDBError;
+use std::num::TryFromIntError;
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
@@ -66,6 +67,10 @@ pub enum Error {
     #[error("Mongo Database Error")]
     MongoDBError(#[from] _MongoDBError),
 
+    #[error("Converstion Error")]
+    TryFromIntError(#[from] TryFromIntError),
+
+    
     #[error("Mongo Database Error")]
     HttpError(#[from] HttpError),
 
