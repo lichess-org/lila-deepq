@@ -284,10 +284,11 @@ pub mod http {
         type Err = Error;
 
         fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-            Ok(HeaderKey(m::Key(s
-                .strip_prefix("Bearer ")
-                .ok_or(HttpError::MalformedHeader)?
-                .to_string())))
+            Ok(HeaderKey(m::Key(
+                s.strip_prefix("Bearer ")
+                    .ok_or(HttpError::MalformedHeader)?
+                    .to_string(),
+            )))
         }
     }
 
