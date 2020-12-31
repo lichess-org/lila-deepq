@@ -23,6 +23,7 @@ pub mod model {
     #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
     pub struct UserId(pub String);
 
+    // TODO: this should be easy enough to make into a macro
     impl From<UserId> for Bson {
         fn from(ui: UserId) -> Bson {
             Bson::String(ui.to_string().to_lowercase())
