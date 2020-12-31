@@ -43,7 +43,6 @@ impl reject::Reject for HttpError {}
 
 impl From<HttpError> for reject::Rejection {
     fn from(e: HttpError) -> Self {
-        // TODO: turn these into the appropriate responses.
         reject::custom(e)
     }
 }

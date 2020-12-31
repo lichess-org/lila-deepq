@@ -208,7 +208,7 @@ pub mod api {
     }
 
     pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<Bson> {
-        // TODO: because games are unique on their game id, we have to do an upsert
+        // NOTE: because games are unique on their game id, we have to do an upsert
         let game: m::Game = game.into();
         let games_coll = db.database.collection("deepq_games");
         games_coll
