@@ -100,6 +100,14 @@ pub struct KeepAlive {
     pub keep_alive: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StreamMsg {
+    KeepAlive(KeepAlive),
+    Request(Request),
+}
+
+
 pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     join_all(insert_many_games(
         db.clone(),
