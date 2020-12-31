@@ -44,8 +44,7 @@ pub mod model {
     pub enum AnalysisType {
         UserAnalysis, // User requested analysis, single-pv
         SystemAnalysis, // System requested analysis, single-pv
-        IrwinDeep, // Irwin analysis, multipv, complete game, deeper
-        CRDeep, // CR analysis, multipv, skips opening, deeper.
+        Deep, // Irwin analysis, multipv, complete game, deeper
     }
 
     impl From<AnalysisType> for Bson {
@@ -86,13 +85,13 @@ pub mod model {
 }
 
 pub mod api {
-
     use chrono::prelude::*;
-    use futures::future::Future;
+    use futures::future::{Future, join_all};
     use mongodb::bson::{
         doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
     };
-    use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
+    use mongodb::options::{FindOneOptions, FindOneAndUpdateOptions, UpdateModifications};
+    use serde::Serialize;
 
     use crate::db::DbConn;
     use crate::deepq::model::GameId;
@@ -186,6 +185,43 @@ pub mod api {
             .await?;
         Ok(())
     }
+
+    #[derive(Serialize)]
+    pub struct QStatus {
+        acquired: u64,
+        queued: u64,
+        oldest: u64,
+    }
+
+    pub async fn q_status(db: DbConn, analysis_type: m::AnalysisType) -> Result<QStatus> {
+        /*let results = join_all(vec![
+            m::Job::coll(db)
+                .count_documents(
+                    doc!{"owner": doc!{ "$ne": Bson::Null }},
+                    None
+                ),
+            m::Job::coll(db)
+                .count_documents(
+                    doc!{"owner": doc!{ "$eq": Bson::Null }},
+                    None
+                ),
+            m::Job::coll(db)
+                .find_one(
+                    doc!{"owner": doc!{ "$eq": Bson::Null }},
+                    FindOneOptions::builder()
+                        .sort(doc!{ "date_last_updated": -1 })
+                        .build()
+                ),
+        ]).await;*/
+        Ok(QStatus {
+            acquired: 0,
+            queued: 0,
+            oldest: 0,
+        })
+
+    }
+
+
 }
 
 pub mod http {
@@ -255,8 +291,8 @@ pub mod http {
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Analysis {
-        depth: u8,
-        multipv: bool,
+        depth: Option<u8>,
+        multipv: Option<bool>,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -352,11 +388,7 @@ pub mod http {
                 nnue: 2_250_000_u64,
                 classical: 4_050_000_u64,
             },
-            m::AnalysisType::CRDeep => Nodes {
-                nnue: 2_500_000_u64,
-                classical: 4_500_000_u64,
-            },
-            m::AnalysisType::IrwinDeep => Nodes {
+            m::AnalysisType::Deep => Nodes {
                 nnue: 2_500_000_u64,
                 classical: 4_500_000_u64,
             },
@@ -366,10 +398,10 @@ pub mod http {
     // TODO: get this from config or env? or lila? (probably lila, tbh)
     fn analysis_for_job(job: &m::Job) -> Option<Analysis> {
         match job.analysis_type {
-            m::AnalysisType::CRDeep => Some(Analysis {
+            m::AnalysisType::Deep => Some(Analysis {
                 // TODO: what is the default that we tend to use for CR?
-                depth: 40,
-                multipv: false,
+                depth: None,
+                multipv: Some(true),
             }),
             _ => None,
         }
@@ -381,8 +413,7 @@ pub mod http {
             // TODO: what is the default right now for lila's fishnet queue?
             m::AnalysisType::UserAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             m::AnalysisType::SystemAnalysis => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            m::AnalysisType::CRDeep => vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            m::AnalysisType::IrwinDeep => Vec::new(),
+            m::AnalysisType::Deep => Vec::new(),
         }
     }
 
@@ -429,9 +460,19 @@ pub mod http {
             .map(|_| String::new())
     }
 
-    async fn fishnet_status(db: DbConn, ApiUser: String) -> StdResult<String, Rejection> {
-        // TODO: implement me - https://github.com/niklasf/fishnet/blob/master/doc/protocol.md#status
-        Ok("TODO")
+    #[derive(Serialize)]
+    struct FishnetStatus {
+        analysis: api::QStatus,
+        system: api::QStatus,
+        deep: api::QStatus,
+    }
+
+    async fn fishnet_status(db: DbConn, _api_user: m::ApiUser) -> StdResult<FishnetStatus, Rejection> {
+        Ok(FishnetStatus{
+            analysis: api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?,
+            system: api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?,
+            deep: api::q_status(db.clone(), m::AnalysisType::Deep).await?,
+        })
     }
 
     async fn json_object_or_no_content<T: Serialize>(
@@ -493,23 +534,31 @@ pub mod http {
         let db = warp::any().map(move || db.clone());
 
         let acquire = warp::path("acquire")
-            .and(warp::method::post())
+            .and(warp::filters::method::post())
             .and(db.clone())
             .and(require_valid_key.clone())
             .and_then(acquire_job)
             .and_then(json_object_or_no_content::<Job>);
 
         let valid_key = warp::path("key")
-            .and(warp::method::get())
+            .and(warp::filters::method::get())
             .and(db.clone())
             .and(warp::path::param())
             .and_then(check_key_validity);
 
         let status = warp::path("status")
-            .and(warp::method::get())
+            .and(warp::filters::method::get())
             .and(db.clone())
             .and(require_valid_key.clone())
-            .map(fishnet_status)
+            .and_then(fishnet_status)
+            .map_or(|val| {
+                Ok(reply::with_status(
+                    reply::json(&String::new()),
+                    http::StatusCode::NO_CONTENT,
+                )),
+                |val| Ok(reply::with_status(reply::json(&val), http::StatusCode::OK)),
+            }
+            )
 
         acquire
             .or(valid_key)

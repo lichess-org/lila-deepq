@@ -87,7 +87,7 @@ impl From<Request> for Vec<CreateJob> {
             .iter()
             .map(|g| CreateJob {
                 game_id: g.id.clone(),
-                analysis_type: AnalysisType::IrwinDeep,
+                analysis_type: AnalysisType::Deep,
                 precedence: precedence_for_origin(request.clone().origin),
             })
             .collect()
