@@ -493,17 +493,20 @@ pub mod http {
         let db = warp::any().map(move || db.clone());
 
         let acquire = warp::path("acquire")
+            .and(warp::method::post())
             .and(db.clone())
             .and(require_valid_key.clone())
             .and_then(acquire_job)
             .and_then(json_object_or_no_content::<Job>);
 
         let valid_key = warp::path("key")
+            .and(warp::method::get())
             .and(db.clone())
             .and(warp::path::param())
             .and_then(check_key_validity);
 
         let status = warp::path("status")
+            .and(warp::method::get())
             .and(db.clone())
             .and(require_valid_key.clone())
             .map(fishnet_status)
