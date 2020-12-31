@@ -22,12 +22,12 @@ use dotenv::dotenv;
 use futures::StreamExt;
 use log::{error, info, warn};
 use mongodb::Client;
-use tokio::io::AsyncBufReadExt;
 use tokio::io::stream_reader;
+use tokio::io::AsyncBufReadExt;
 use tokio::time::{delay_for, Duration};
 
 use lila_deepq::db::DbConn;
-use lila_deepq::irwin::{Request, KeepAlive, add_to_queue};
+use lila_deepq::irwin::{add_to_queue, StreamMsg};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,36 +42,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or("https://lichess.org/api/stream/irwin".to_string());
     let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
 
-
     let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
     let mongo_client = Client::with_uri_str(&mongo_uri).await?;
 
     let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
     let database = mongo_client.database(&database_name);
-    let db = DbConn{client: mongo_client, database: database};
+    let db = DbConn {
+        client: mongo_client,
+        database: database,
+    };
 
     info!("Starting up...");
 
     loop {
         info!("Connecting...");
-        let response = client.get(api_url.as_str())
+        // TODO: this machinery should probably be in irwin::stream(&api_key)
+        let response = client
+            .get(api_url.as_str())
             .header("User-Agent", "lila-deepq")
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await?;
         let stream = stream_reader(
-            response.bytes_stream().map(|i| i.map_err(|e| Error::new(ErrorKind::Other, e)))
+            response
+                .bytes_stream()
+                .map(|i| i.map_err(|e| Error::new(ErrorKind::Other, e))),
         );
         let mut lines = stream.lines();
 
         info!("Reading stream...");
         while let Some(Ok(line)) = lines.next().await {
-            match (
-                serde_json::from_str::<KeepAlive>(line.trim().into()),
-                serde_json::from_str::<Request>(line.trim().into())
-            ) {
-                (Ok(KeepAlive{keep_alive: _}), _) => info!("keepAlive received"),
-                (_, Ok(request)) => {
+            match serde_json::from_str::<StreamMsg>(line.trim().into()) {
+                Ok(StreamMsg::KeepAlive(_)) => info!("keepAlive received"),
+                Ok(StreamMsg::Request(request)) => {
                     info!(
                         "{:?} report: {} for {} games",
                         request.origin,
@@ -79,8 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         request.games.len()
                     );
                     add_to_queue(db.clone(), request).await?;
-                },
-                (_, Err(e)) => error!("Unexpected message: {:?} from lichess:\n{}", line.trim(), e)
+                }
+                Err(e) => error!("Unexpected message: {:?} from lichess:\n{}", line.trim(), e),
             }
         }
 
