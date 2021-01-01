@@ -15,10 +15,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::str::FromStr;
 use std::convert::Infallible;
 use std::marker::Send;
 use std::result::Result as StdResult;
 
+use mongodb::bson::oid::ObjectId;
 use serde::Serialize;
 use warp::{
     http, reject,
@@ -26,7 +28,8 @@ use warp::{
     Filter, Rejection,
 };
 
-use crate::error::HttpError;
+use crate::error::{Error, HttpError};
+use crate::db::DbConn;
 
 /// Unauthorized rejection
 pub fn unauthorized() -> Rejection {
@@ -45,6 +48,21 @@ where
 {
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
 }
+
+pub struct Id(ObjectId);
+
+impl FromStr for Id {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Id(ObjectId::with_string(s)?))
+    }
+}
+
+impl From<Id> for ObjectId {
+    fn from(id: Id) -> ObjectId { id.0 }
+}
+
 
 pub async fn json_object_or_no_content<T: Serialize>(
     value: Option<T>,
