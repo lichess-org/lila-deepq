@@ -137,8 +137,7 @@ where
     T: Iterator<Item = CreateGame> + Clone,
 {
     games
-        .clone()
-        .map(move |game| insert_one_game(db.clone(), game.clone()))
+        .map(move |game| insert_one_game(db.clone(), game))
 }
 
 pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {

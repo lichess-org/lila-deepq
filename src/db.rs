@@ -29,13 +29,10 @@ pub struct DbConn {
 
 pub async fn connection() -> Result<DbConn> {
     let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
-    let mongo_client = Client::with_uri_str(&mongo_uri).await?;
+    let client = Client::with_uri_str(&mongo_uri).await?;
 
     let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
-    let database = mongo_client.database(&database_name);
+    let database = client.database(&database_name);
 
-    Ok(DbConn {
-        client: mongo_client,
-        database: database,
-    })
+    Ok(DbConn {client, database })
 }

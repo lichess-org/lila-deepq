@@ -84,7 +84,7 @@ impl Job {
         db.database.collection("deepq_fishnetjobs")
     }
 
-    pub fn seconds_since_created(self: &Self) -> i64 {
+    pub fn seconds_since_created(&self) -> i64 {
         Utc::now().timestamp() - self.date_last_updated.timestamp()
     }
 
