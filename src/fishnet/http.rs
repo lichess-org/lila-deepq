@@ -19,6 +19,7 @@ use std::convert::Infallible;
 use std::result::Result as StdResult;
 use std::str::FromStr;
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, skip_serializing_none, DisplayFromStr};
 use shakmaty::fen::Fen;
@@ -269,8 +270,10 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
     // TODO: Multiple active jobs are allowed. Instead we should unassign old ones that
     //       are not finished.
     // NOTE: not using .map because of unstable async lambdas
+    debug!("start");
     Ok(match api::assign_job(db.clone(), api_user.clone()).await? {
         Some(job) => {
+            debug!("Some(job) = {:?}", job);
             let game = match find_game(db.clone(), job.game_id.clone()).await {
                 Ok(game) => Ok(game),
                 Err(err) => {
@@ -280,23 +283,27 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
             }?;
             match game {
                 None => {
+                    debug!("No game for game_id: {:?}", job.game_id);
                     api::delete_job(db.clone(), job._id).await?;
                     // TODO: I don't yet understand recursion in an async function in Rust.
                     None // acquire_job(db.clone(), api_user.clone())?
                 }
-                Some(game) => Some(Job {
-                    game_id: job.game_id.to_string(),
-                    position: starting_position(game.clone()),
-                    variant: Variant::Standard,
-                    skip_positions: skip_positions_for_job(&job),
-                    moves: game.pgn,
-                    work: WorkInfo {
-                        id: job._id.to_string(),
-                        _type: WorkType::Analysis,
-                        nodes: nodes_for_job(&job),
-                        analysis: requested_analysis_for_job(&job),
-                    },
-                }),
+                Some(game) => {
+                    debug!("Some(game) = {:?}", game);
+                    Some(Job {
+                        game_id: job.game_id.to_string(),
+                        position: starting_position(game.clone()),
+                        variant: Variant::Standard,
+                        skip_positions: skip_positions_for_job(&job),
+                        moves: game.pgn,
+                        work: WorkInfo {
+                            id: job._id.to_string(),
+                            _type: WorkType::Analysis,
+                            nodes: nodes_for_job(&job),
+                            analysis: requested_analysis_for_job(&job),
+                        },
+                    })
+                },
             }
         }
         None => None,

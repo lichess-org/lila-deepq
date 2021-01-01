@@ -17,6 +17,7 @@
 
 use chrono::prelude::*;
 use futures::future::Future;
+use log::debug;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
     options::UpdateOptions,
@@ -109,33 +110,30 @@ impl From<CreateGameAnalysis> for m::GameAnalysis {
     }
 }
 
-pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<Bson> {
+pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<m::GameId> {
     // NOTE: because games are unique on their game id, we have to do an upsert
     let game: m::Game = game.into();
+    debug!("Insert One Game: {:?}", game);
     let games_coll = db.database.collection("deepq_games");
-    games_coll
+    let result = games_coll
         .update_one(
             doc! { "_id": game._id.clone() },
             to_document(&game)?,
             Some(UpdateOptions::builder().upsert(true).build()),
         )
         .await?;
-    Ok(games_coll
-        .find_one(doc! { "_id": game._id.clone() }, None)
-        .await?
-        .ok_or(Error::CreateError)?
-        .get("_id")
-        .ok_or(Error::CreateError)?
-        .clone())
+    debug!("Result: {:?}", result);
+    Ok(game._id)
 }
 
 pub fn insert_many_games<T>(
     db: DbConn,
     games: T,
-) -> impl Iterator<Item = impl Future<Output = Result<Bson>>>
+) -> impl Iterator<Item = impl Future<Output = Result<m::GameId>>>
 where
     T: Iterator<Item = CreateGame> + Clone,
 {
+    debug!("Insert Many Games");
     games
         .map(move |game| insert_one_game(db.clone(), game))
 }

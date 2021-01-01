@@ -25,7 +25,7 @@ pub struct UserId(pub String);
 // TODO: this should be easy enough to make into a macro
 impl From<UserId> for Bson {
     fn from(ui: UserId) -> Bson {
-        Bson::String(ui.to_string().to_lowercase())
+        Bson::String(ui.to_string())
     }
 }
 
@@ -34,7 +34,7 @@ pub struct GameId(pub String);
 
 impl From<GameId> for Bson {
     fn from(gi: GameId) -> Bson {
-        Bson::String(gi.to_string().to_lowercase())
+        Bson::String(gi.to_string())
     }
 }
 

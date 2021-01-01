@@ -20,8 +20,10 @@
 use std::str::FromStr;
 use std::io::{Error as IoError, ErrorKind};
 use std::result::{Result as StdResult};
+use std::iter::Iterator;
 
-use futures::{future::{self, join_all}, stream::{Stream, StreamExt}};
+// use log::debug;
+use futures::{future::{self, try_join_all}, stream::{Stream, StreamExt}};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt},
     time::Duration
@@ -125,13 +127,13 @@ impl FromStr for StreamMsg {
 }
 
 pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
-    join_all(insert_many_games(
+    try_join_all(insert_many_games(
         db.clone(),
         request.games.iter().map(Into::into),
     ))
-    .await;
+    .await?;
     let fishnet_jobs: Vec<CreateJob> = request.clone().into();
-    join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await;
+    try_join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await?;
     insert_one_report(db.clone(), request.into()).await?;
     Ok(())
 }
