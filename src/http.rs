@@ -43,7 +43,7 @@ where
     V: Send + Sync,
     E: Fn() -> Rejection + Clone + Send + Sync + 'a
 {
-    filter.and_then(move |v: Option<V>| async move { v.ok_or(err()) })
+    filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
 }
 
 pub async fn json_object_or_no_content<T: Serialize>(
@@ -80,7 +80,7 @@ pub async fn recover(err: Rejection) -> Result<impl Reply, Infallible> {
     } else if let Some(HttpError::Forbidden) = err.find() {
         code = http::StatusCode::FORBIDDEN;
         message = "FORBIDDEN";
-    } else if let Some(_) = err.find::<reject::MethodNotAllowed>() {
+    } else if err.find::<reject::MethodNotAllowed>().is_some() {
         code = http::StatusCode::METHOD_NOT_ALLOWED;
         message = "METHOD_NOT_ALLOWED";
     } else {

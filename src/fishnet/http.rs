@@ -302,8 +302,8 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     let status = warp::path("status")
         .and(warp::filters::method::get())
-        .and(db.clone())
-        .and(authorization_possible.clone())
+        .and(db)
+        .and(authorization_possible)
         .and_then(fishnet_status)
         .map(|status| {
             Ok(reply::with_status(
