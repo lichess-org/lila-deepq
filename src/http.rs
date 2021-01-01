@@ -64,6 +64,11 @@ impl From<Id> for ObjectId {
 }
 
 
+pub fn with_db(db: DbConn) -> impl Filter<Extract = (DbConn,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || db.clone())
+}
+
+
 pub async fn json_object_or_no_content<T: Serialize>(
     value: Option<T>,
 ) -> StdResult<WithStatus<Json>, Rejection> {
