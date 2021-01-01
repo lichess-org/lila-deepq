@@ -31,13 +31,9 @@ extern crate serde_with;
 #[macro_use]
 extern crate log;
 
-use std::env;
 use std::result::Result as StdResult;
 
-use crate::db::DbConn;
 use dotenv::dotenv;
-use mongodb::Client;
-
 use warp::Filter;
 
 #[tokio::main]
@@ -45,20 +41,13 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     pretty_env_logger::init();
 
-    let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
-    let client = Client::with_uri_str(&mongo_uri).await?;
+    info!("Connecting to database...");
+    let conn = db::connection().await?;
 
-    let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
-    let database = client.database(&database_name);
-    let db = DbConn {
-        client: client,
-        database: database,
-    };
+    info!("Mounting urls...");
+    let app = fishnet::http::mount(conn.clone());
 
-    info!("Starting server");
-
-    let app = fishnet::http::mount(db.clone());
-
+    info!("Starting server...");
     warp::serve(warp::path("fishnet").and(app))
         .run(([127, 0, 0, 1], 3030))
         .await;
