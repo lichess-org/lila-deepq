@@ -250,7 +250,7 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
 async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
     api::get_api_user(db, key.into())
         .await?
-        .ok_or(reject::not_found())
+        .ok_or_else(reject::not_found)
         .map(|_| String::new())
 }
 
@@ -267,12 +267,11 @@ async fn fishnet_status(
     db: DbConn,
     api_user: Option<m::ApiUser>,
 ) -> StdResult<FishnetStatus, Rejection> {
-    Ok(FishnetStatus {
-        analysis: api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?,
-        system: api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?,
-        deep: api::q_status(db.clone(), m::AnalysisType::Deep).await?,
-        key: api::key_status(api_user.clone()),
-    })
+    let analysis = api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?;
+    let system = api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?;
+    let deep = api::q_status(db.clone(), m::AnalysisType::Deep).await?;
+    let key = api::key_status(api_user.clone());
+    Ok(FishnetStatus {analysis, system, deep, key})
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {

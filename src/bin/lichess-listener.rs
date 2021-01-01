@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
     let api_url = env::var("LILA_DEEPQ_IRWIN_STREAM_URL")
-        .unwrap_or("https://lichess.org/api/stream/irwin".to_string());
+        .unwrap_or_else(|_| "https://lichess.org/api/stream/irwin".to_string());
     let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
 
     let conn = db::connection().await?;

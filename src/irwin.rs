@@ -61,7 +61,7 @@ impl From<&Game> for CreateGame {
         let g = g.clone();
         CreateGame {
             game_id: g.id,
-            emts: g.emts.unwrap_or(Vec::new()),
+            emts: g.emts.unwrap_or_else(Vec::new),
             pgn: g.pgn,
             black: Some(g.black),
             white: Some(g.white),
@@ -137,14 +137,14 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
 }
 
 pub async fn stream(
-    url: &String,
-    api_key: &String,
+    url: &str,
+    api_key: &str,
 ) -> Result<impl Stream<Item = Result<StreamMsg>>> {
     let client = reqwest::Client::builder()
         .tcp_keepalive(Duration::from_millis(1000))
         .build()?;
     let response = client
-        .get(url.as_str())
+        .get(url)
         .header("User-Agent", "lila-deepq")
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
