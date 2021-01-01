@@ -129,6 +129,11 @@ pub struct PlyScore {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SkippedAnalysis {
+    skipped: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct EmptyAnalysis {
     depth: i32,
     score: PlyScore,
@@ -147,7 +152,7 @@ pub struct FullAnalysis {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum PlyAnalysis {
-    Skipped(SkippedPlyAnalysis),
+    Skipped(SkippedAnalysis),
     Full(FullAnalysis),
     Empty(EmptyAnalysis),
 }
@@ -296,6 +301,10 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
     })
 }
 
+async fn abort_job(db: DbConn, api_usr: m::ApiUser, job_id: String) -> StdResult<Option<()>, Rejection> {
+    Err(reject::not_found())
+}
+
 async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Rejection> {
     api::get_api_user(db, key.into())
         .await?
@@ -339,6 +348,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let authorization_required = required_parameter(authorization_possible.clone(), &unauthorized);
 
     let db = warp::any().map(move || db.clone());
+    let empty = warp::any().map(String::new);
 
     let acquire = warp::path("acquire")
         .and(warp::filters::method::post())
@@ -346,6 +356,14 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
         .and(authorization_required.clone())
         .and_then(acquire_job)
         .and_then(json_object_or_no_content::<Job>);
+
+    let abort = warp::path("abort")
+        .and(warp::filters::method::post())
+        .and(db.clone())
+        .and(authorization_required.clone())
+        .and(empty)
+        .and_then(abort_job)
+        .and_then(json_object_or_no_content::<()>);
 
     let valid_key = warp::path("key")
         .and(warp::filters::method::get())
@@ -365,5 +383,10 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
             ))
         });
 
-    acquire.or(valid_key).or(status).recover(recover).boxed()
+    acquire
+        .or(abort)
+        .or(valid_key)
+        .or(status)
+        .recover(recover)
+        .boxed()
 }
