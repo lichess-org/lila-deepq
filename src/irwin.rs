@@ -16,7 +16,16 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 //
 //
-use futures::future::join_all;
+
+use std::str::FromStr;
+use std::io::{Error as IoError, ErrorKind};
+use std::result::{Result as StdResult};
+
+use futures::{future::{self, join_all}, stream::{Stream, StreamExt}};
+use tokio::{
+    io::{stream_reader, AsyncBufReadExt},
+    time::Duration
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +34,7 @@ use crate::deepq::api::{
     insert_many_games, insert_one_report, precedence_for_origin, CreateGame, CreateReport,
 };
 use crate::deepq::model::{Eval, GameId, ReportOrigin, ReportType, UserId};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::fishnet::api::{insert_many_jobs, CreateJob};
 use crate::fishnet::model::AnalysisType;
 
@@ -107,6 +116,14 @@ pub enum StreamMsg {
     Request(Request),
 }
 
+impl FromStr for StreamMsg {
+    type Err = Error;
+
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+        Ok(serde_json::from_str(&s)?)
+    }
+}
+
 pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     join_all(insert_many_games(
         db.clone(),
@@ -117,4 +134,26 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await;
     insert_one_report(db.clone(), request.into()).await?;
     Ok(())
+}
+
+pub async fn stream(
+    url: &String,
+    api_key: &String,
+) -> Result<impl Stream<Item = Result<StreamMsg>>> {
+    let client = reqwest::Client::builder()
+        .tcp_keepalive(Duration::from_millis(1000))
+        .build()?;
+    let response = client
+        .get(url.as_str())
+        .header("User-Agent", "lila-deepq")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await?;
+    Ok(stream_reader(
+        response
+            .bytes_stream()
+            .map(|i| i.map_err(|e| IoError::new(ErrorKind::Other, e))),
+    ).lines()
+        .filter(|line| future::ready(!line.as_ref().unwrap().is_empty()))
+        .map(|line| FromStr::from_str(&(line?))))
 }

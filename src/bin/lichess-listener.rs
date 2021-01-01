@@ -16,18 +16,13 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::env;
-use std::io::{Error, ErrorKind};
 
 use dotenv::dotenv;
-use futures::StreamExt;
+use futures::stream::StreamExt;
 use log::{error, info, warn};
-use mongodb::Client;
-use tokio::io::stream_reader;
-use tokio::io::AsyncBufReadExt;
 use tokio::time::{delay_for, Duration};
 
-use lila_deepq::db::DbConn;
-use lila_deepq::irwin::{add_to_queue, StreamMsg};
+use lila_deepq::{db, irwin};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,55 +30,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Reading config...");
     dotenv().ok();
 
-    let client = reqwest::Client::builder()
-        .tcp_keepalive(Duration::from_millis(1000))
-        .build()?;
     let api_url = env::var("LILA_DEEPQ_IRWIN_STREAM_URL")
         .unwrap_or("https://lichess.org/api/stream/irwin".to_string());
     let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
 
-    let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
-    let mongo_client = Client::with_uri_str(&mongo_uri).await?;
-
-    let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
-    let database = mongo_client.database(&database_name);
-    let db = DbConn {
-        client: mongo_client,
-        database: database,
-    };
+    let conn = db::connection().await?;
 
     info!("Starting up...");
-
     loop {
         info!("Connecting...");
-        // TODO: this machinery should probably be in irwin::stream(&api_key)
-        let response = client
-            .get(api_url.as_str())
-            .header("User-Agent", "lila-deepq")
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await?;
-        let stream = stream_reader(
-            response
-                .bytes_stream()
-                .map(|i| i.map_err(|e| Error::new(ErrorKind::Other, e))),
-        );
-        let mut lines = stream.lines();
+        let mut stream = irwin::stream(&api_url, &api_key).await?;
 
         info!("Reading stream...");
-        while let Some(Ok(line)) = lines.next().await {
-            match serde_json::from_str::<StreamMsg>(line.trim().into()) {
-                Ok(StreamMsg::KeepAlive(_)) => info!("keepAlive received"),
-                Ok(StreamMsg::Request(request)) => {
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Ok(irwin::StreamMsg::KeepAlive(_)) => info!("keepAlive received"),
+                Ok(irwin::StreamMsg::Request(request)) => {
                     info!(
                         "{:?} report: {} for {} games",
                         request.origin,
                         request.user.id.0,
                         request.games.len()
                     );
-                    add_to_queue(db.clone(), request).await?;
+                    irwin::add_to_queue(conn.clone(), request).await?;
                 }
-                Err(e) => error!("Unexpected message: {:?} from lichess:\n{}", line.trim(), e),
+                Err(e) => error!("Error parsing message from lichess:\n{:?}", e),
             }
         }
 

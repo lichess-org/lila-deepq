@@ -15,10 +15,27 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::env;
+
 use mongodb::{Client, Database};
+
+use crate::error::Result;
 
 #[derive(Clone)]
 pub struct DbConn {
     pub client: Client,
     pub database: Database,
+}
+
+pub async fn connection() -> Result<DbConn> {
+    let mongo_uri = env::var("LILA_DEEPQ_MONGO_URI")?;
+    let mongo_client = Client::with_uri_str(&mongo_uri).await?;
+
+    let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
+    let database = mongo_client.database(&database_name);
+
+    Ok(DbConn {
+        client: mongo_client,
+        database: database,
+    })
 }

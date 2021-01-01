@@ -15,12 +15,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::env::VarError;
+use std::num::TryFromIntError;
+
 use mongodb::bson::{
     de::Error as _BsonDeError, document::ValueAccessError as _BsonValueAccessError,
     ser::Error as _BsonSeError,
 };
 use mongodb::error::Error as _MongoDBError;
-use std::num::TryFromIntError;
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
@@ -69,10 +71,21 @@ pub enum Error {
 
     #[error("Converstion Error")]
     TryFromIntError(#[from] TryFromIntError),
-
     
     #[error("Mongo Database Error")]
     HttpError(#[from] HttpError),
+
+    #[error("IrwinStreamError")]
+    IrwinStreamError(#[from] reqwest::Error),
+
+    #[error("serde_json Error")]
+    SerdeJsonError(#[from] serde_json::Error),
+
+    #[error("std::io::Error")]
+    IoError(#[from] std::io::Error),
+
+    #[error("env::VarError")]
+    VarError(#[from] VarError),
 
     #[error("Unable to deserialize something")]
     DeserializationError,
@@ -82,6 +95,7 @@ pub enum Error {
 
     #[error("I haven't implemented this yet")]
     Unimplemented,
+
 }
 
 impl reject::Reject for Error {}
