@@ -50,6 +50,7 @@ impl From<HttpError> for reject::Rejection {
     }
 }
 
+// TODO: this desperately needs to be cleaned up. 
 #[derive(Error, Debug)]
 pub enum Error {
     // #[error("Serde Deserialization Error")]
@@ -86,6 +87,9 @@ pub enum Error {
 
     #[error("env::VarError")]
     VarError(#[from] VarError),
+
+    #[error("mongodb::bson::oid::Error")]
+    BsonOidError(#[from] mongodb::bson::oid::Error),
 
     #[error("Unable to deserialize something")]
     DeserializationError,
