@@ -259,6 +259,8 @@ fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
 }
 
 async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
+    // TODO: don't give someone a new job if they already have one!
+    //       or just abort their old job?
     // NOTE: not using .map because of unstable async lambdas
     Ok(match api::assign_job(db.clone(), api_user).await? {
         Some(job) => {
