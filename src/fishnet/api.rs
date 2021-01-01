@@ -99,10 +99,10 @@ pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Jo
         .transpose()?)
 }
 
-pub async fn unassign_job(db: DbConn, id: ObjectId) -> Result<()> {
+pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: ObjectId) -> Result<()> {
     m::Job::coll(db)
         .update_one(
-            doc! { "_id": id },
+            doc! { "_id": id, "owner": api_user.key.clone() },
             UpdateModifications::Document(doc! {"owner": Bson::Null}),
             None,
         )

@@ -267,12 +267,12 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
     // TODO: don't give someone a new job if they already have one!
     //       or just abort their old job?
     // NOTE: not using .map because of unstable async lambdas
-    Ok(match api::assign_job(db.clone(), api_user).await? {
+    Ok(match api::assign_job(db.clone(), api_user.clone()).await? {
         Some(job) => {
             let game = match find_game(db.clone(), job.game_id.clone()).await {
                 Ok(game) => Ok(game),
                 Err(err) => {
-                    api::unassign_job(db.clone(), job._id.clone()).await?;
+                    api::unassign_job(db.clone(), api_user, job._id.clone()).await?;
                     Err(err)
                 }
             }?;
