@@ -81,7 +81,7 @@ pub struct Nodes {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Analysis {
+pub struct RequestedAnalysis {
     depth: Option<u8>,
     multipv: Option<bool>,
 }
@@ -92,7 +92,7 @@ pub struct WorkInfo {
     _type: WorkType,
     id: String,
     nodes: Nodes,
-    analysis: Option<Analysis>,
+    analysis: Option<RequestedAnalysis>,
 }
 
 #[serde_as]
@@ -108,6 +108,55 @@ pub struct Job {
 
     #[serde(rename = "skipPositions")]
     skip_positions: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum StockfishFlavor {
+    Nnue,
+    Classical,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StockfishType {
+    flavor: StockfishFlavor,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PlyScore {
+    cp: Option<i32>,
+    mate: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EmptyAnalysis {
+    depth: i32,
+    score: PlyScore,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FullAnalysis {
+    pv: String, // TODO: better type here?
+    depth: i32,
+    score: PlyScore,
+    time: i32,
+    nodes: i32,
+    nps: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum PlyAnalysis {
+    Skipped(SkippedPlyAnalysis),
+    Full(FullAnalysis),
+    Empty(EmptyAnalysis),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AnalysisReport {
+    fishnet: RequestInfo,
+    stockfish: StockfishType,
+    analysis: Vec<PlyAnalysis>,
 }
 
 #[derive(Debug)]
@@ -131,8 +180,6 @@ impl From<HeaderKey> for m::Key {
     }
 }
 
-// NOTE: This is not a lambda because async lambdas
-//      are unstable.
 async fn api_user_for_key<T>(db: DbConn, key: T) -> StdResult<Option<m::ApiUser>, Rejection>
 where
     T: Into<m::Key>,
@@ -190,9 +237,9 @@ fn nodes_for_job(job: &m::Job) -> Nodes {
 }
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
-fn analysis_for_job(job: &m::Job) -> Option<Analysis> {
+fn requested_analysis_for_job(job: &m::Job) -> Option<RequestedAnalysis> {
     match job.analysis_type {
-        m::AnalysisType::Deep => Some(Analysis {
+        m::AnalysisType::Deep => Some(RequestedAnalysis {
             // TODO: what is the default that we tend to use for CR?
             depth: None,
             multipv: Some(true),
@@ -238,7 +285,7 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
                         id: job._id.to_string(),
                         _type: WorkType::Analysis,
                         nodes: nodes_for_job(&job),
-                        analysis: analysis_for_job(&job),
+                        analysis: requested_analysis_for_job(&job),
                     },
                 }),
             }
@@ -271,7 +318,12 @@ async fn fishnet_status(
     let system = api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?;
     let deep = api::q_status(db.clone(), m::AnalysisType::Deep).await?;
     let key = api::key_status(api_user.clone());
-    Ok(FishnetStatus {analysis, system, deep, key})
+    Ok(FishnetStatus {
+        analysis,
+        system,
+        deep,
+        key,
+    })
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
