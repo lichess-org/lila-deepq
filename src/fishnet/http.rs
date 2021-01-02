@@ -21,7 +21,7 @@ use std::result::Result as StdResult;
 use std::str::FromStr;
 
 use log::{debug, info};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{
     serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator,
 };
@@ -166,6 +166,12 @@ pub struct AnalysisReport {
     analysis: Vec<PlyAnalysis>,
 }
 
+impl From<AnalysisReport> for m::Key {
+    fn from(report: AnalysisReport) -> m::Key {
+        report.fishnet.api_key
+    }
+}
+
 #[derive(Debug)]
 pub struct HeaderKey(pub m::Key);
 
@@ -187,21 +193,39 @@ impl From<HeaderKey> for m::Key {
     }
 }
 
-async fn api_user_for_key<T>(db: DbConn, key: T) -> StdResult<Option<m::ApiUser>, Rejection>
+async fn api_user_for_key<T>(
+    db: DbConn,
+    payload_with_key: T,
+) -> StdResult<Option<m::ApiUser>, Rejection>
 where
     T: Into<m::Key>,
 {
-    Ok(api::get_api_user(db, key.into()).await?)
+    Ok(api::get_api_user(db, payload_with_key.into()).await?)
+}
+
+async fn api_user_for_key_with_payload<T>(
+    db: DbConn,
+    payload_with_key: T,
+) -> StdResult<Option<(m::ApiUser, T)>, Rejection>
+where
+    T: Into<m::Key> + Clone,
+{
+    Ok(api::get_api_user(db, payload_with_key.clone().into())
+        .await?
+        .map(|u| (u, payload_with_key)))
 }
 
 /// extract an ApiUser from the json body request
-fn api_user_from_body(
+fn body_authorization_possible_with_payload<T>(
     db: DbConn,
-) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Rejection> + Clone {
+) -> impl Filter<Extract = (Option<(m::ApiUser, T)>,), Error = Rejection> + Clone + Send + Sync
+where
+    T: Into<m::Key> + DeserializeOwned + Clone + Send + Sync,
+{
     warp::any()
         .map(move || db.clone())
-        .and(warp::body::json::<FishnetRequest>())
-        .and_then(api_user_for_key)
+        .and(warp::body::json::<T>())
+        .and_then(api_user_for_key_with_payload)
 }
 
 /// extract a HeaderKey from the Authorization header
@@ -222,6 +246,20 @@ fn api_user_from_header(
 /// extract an m::ApiUser from the Authorization header
 fn no_api_user() -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
     warp::any().map(move || None)
+}
+
+fn header_authorization_possible(
+    db: DbConn,
+) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
+    warp::any()
+        .and(api_user_from_header(db.clone()))
+        .or(no_api_user())
+        .unify()
+}
+fn header_authorization_required(
+    db: DbConn,
+) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
+    required_parameter(header_authorization_possible(db), &unauthorized)
 }
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
@@ -368,26 +406,17 @@ async fn fishnet_status(
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-    let authorization_possible = warp::any()
-        .and(api_user_from_body(db.clone()))
-        .or(api_user_from_header(db.clone()))
-        .unify()
-        .or(no_api_user())
-        .unify();
-
-    let authorization_required = required_parameter(authorization_possible.clone(), &unauthorized);
-
     let acquire = path("acquire")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorization_required.clone())
+        .and(header_authorization_required(db.clone()))
         .and_then(acquire_job)
         .and_then(json_object_or_no_content::<Job>);
 
     let abort = path("abort")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorization_required.clone())
+        .and(header_authorization_required(db.clone()))
         .and(path::param())
         .and_then(abort_job)
         .and_then(json_object_or_no_content::<()>);
@@ -395,7 +424,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let analysis = path("analysis")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorization_required.clone())
+        .and(header_authorization_required(db.clone()))
         .and(path::param())
         .and(warp::body::json::<AnalysisReport>())
         .and_then(save_job_analysis)
@@ -409,8 +438,8 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     let status = path("status")
         .and(method::get())
-        .and(with_db(db))
-        .and(authorization_possible)
+        .and(with_db(db.clone()))
+        .and(header_authorization_possible(db))
         .and_then(fishnet_status)
         .map(|status| {
             Ok(reply::with_status(
