@@ -126,17 +126,21 @@ pub struct QStatus {
 
 pub async fn q_status(db: DbConn, analysis_type: m::AnalysisType) -> Result<QStatus> {
     let acquired = m::Job::acquired_jobs(db.clone(), analysis_type.clone())
-            .await?
-            .try_into()?;
+        .await?
+        .try_into()?;
     let queued = m::Job::queued_jobs(db.clone(), analysis_type.clone())
-            .await?
-            .try_into()?;
+        .await?
+        .try_into()?;
     let oldest = m::Job::oldest_job(db.clone(), analysis_type.clone())
-            .await?
-            .map(|job| job.seconds_since_created())
-            .unwrap_or(0_i64)
-            .try_into()?;
-    Ok(QStatus {acquired, queued, oldest})
+        .await?
+        .map(|job| job.seconds_since_created())
+        .unwrap_or(0_i64)
+        .try_into()?;
+    Ok(QStatus {
+        acquired,
+        queued,
+        oldest,
+    })
 }
 
 #[derive(Serialize)]

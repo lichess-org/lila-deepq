@@ -39,7 +39,6 @@ pub enum HttpError {
 
     #[error("Forbidden")]
     Forbidden,
-
 }
 
 impl reject::Reject for HttpError {}
@@ -50,7 +49,7 @@ impl From<HttpError> for reject::Rejection {
     }
 }
 
-// TODO: this desperately needs to be cleaned up. 
+// TODO: this desperately needs to be cleaned up.
 #[derive(Error, Debug)]
 pub enum Error {
     // #[error("Serde Deserialization Error")]
@@ -72,7 +71,6 @@ pub enum Error {
 
     #[error("Converstion Error")]
     TryFromIntError(#[from] TryFromIntError),
-    
     #[error("Mongo Database Error")]
     HttpError(#[from] HttpError),
 
@@ -105,7 +103,6 @@ pub enum Error {
 
     #[error("I haven't implemented this yet")]
     Unimplemented,
-
 }
 
 impl reject::Reject for Error {}

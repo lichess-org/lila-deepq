@@ -34,5 +34,5 @@ pub async fn connection() -> Result<DbConn> {
     let database_name = env::var("LILA_DEEPQ_MONGO_DATABASE")?;
     let database = client.database(&database_name);
 
-    Ok(DbConn {client, database })
+    Ok(DbConn { client, database })
 }

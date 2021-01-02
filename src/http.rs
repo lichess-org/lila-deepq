@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::str::FromStr;
 use std::convert::Infallible;
 use std::marker::Send;
 use std::result::Result as StdResult;
+use std::str::FromStr;
 
 use mongodb::bson::oid::ObjectId;
 use serde::Serialize;
@@ -28,8 +28,8 @@ use warp::{
     Filter, Rejection,
 };
 
-use crate::error::{Error, HttpError};
 use crate::db::DbConn;
+use crate::error::{Error, HttpError};
 
 /// Unauthorized rejection
 pub fn unauthorized() -> Rejection {
@@ -44,7 +44,7 @@ pub fn required_parameter<'a, F, E, V>(
 where
     F: Filter<Extract = (Option<V>,), Error = Infallible> + Clone + 'a,
     V: Send + Sync,
-    E: Fn() -> Rejection + Clone + Send + Sync + 'a
+    E: Fn() -> Rejection + Clone + Send + Sync + 'a,
 {
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
 }
@@ -60,14 +60,16 @@ impl FromStr for Id {
 }
 
 impl From<Id> for ObjectId {
-    fn from(id: Id) -> ObjectId { id.0 }
+    fn from(id: Id) -> ObjectId {
+        id.0
+    }
 }
 
-
-pub fn with_db(db: DbConn) -> impl Filter<Extract = (DbConn,), Error = std::convert::Infallible> + Clone {
+pub fn with_db(
+    db: DbConn,
+) -> impl Filter<Extract = (DbConn,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || db.clone())
 }
-
 
 pub async fn json_object_or_no_content<T: Serialize>(
     value: Option<T>,

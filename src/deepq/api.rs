@@ -22,10 +22,7 @@ use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
     options::UpdateOptions,
 };
-use shakmaty::{
-    fen::Fen,
-    uci::Uci,
-};
+use shakmaty::{fen::Fen, uci::Uci};
 
 use crate::db::DbConn;
 use crate::deepq::model as m;
@@ -138,8 +135,7 @@ where
     T: Iterator<Item = CreateGame> + Clone,
 {
     debug!("Insert Many Games");
-    games
-        .map(move |game| insert_one_game(db.clone(), game))
+    games.map(move |game| insert_one_game(db.clone(), game))
 }
 
 pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {

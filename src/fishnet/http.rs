@@ -16,13 +16,15 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::convert::Infallible;
+use std::num::NonZeroU8;
 use std::result::Result as StdResult;
 use std::str::FromStr;
-use std::num::NonZeroU8;
 
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator};
+use serde_with::{
+    serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator,
+};
 use shakmaty::{fen::Fen, uci::Uci};
 use warp::{
     filters::{method, BoxedFilter},
@@ -303,7 +305,7 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
                             depth: depth_for_job(&job),
                         },
                     })
-                },
+                }
             }
         }
         None => None,
@@ -321,7 +323,10 @@ async fn abort_job(
 }
 
 async fn save_job_analysis(
-    db: DbConn, api_user: m::ApiUser, job_id: Id, analysis: AnalysisReport
+    db: DbConn,
+    api_user: m::ApiUser,
+    job_id: Id,
+    analysis: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
     info!("save_job_analysis");
     debug!("AnalysisReport: {:?}", analysis);
@@ -358,8 +363,8 @@ async fn fishnet_status(
     let system = api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?;
     let deep = api::q_status(db.clone(), m::AnalysisType::Deep).await?;
     let key = api::key_status(api_user.clone());
-    let analysis = FishnetAnalysisStatus{user, system, deep};
-    Ok(FishnetStatus {analysis, key})
+    let analysis = FishnetAnalysisStatus { user, system, deep };
+    Ok(FishnetStatus { analysis, key })
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
