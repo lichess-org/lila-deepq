@@ -17,19 +17,24 @@
 //
 //
 
-use std::str::FromStr;
+use std::convert::{TryFrom, TryInto};
 use std::io::{Error as IoError, ErrorKind};
-use std::result::{Result as StdResult};
 use std::iter::Iterator;
+use std::result::Result as StdResult;
+use std::str::FromStr;
 
 // use log::debug;
-use futures::{future::{self, try_join_all}, stream::{Stream, StreamExt}};
+use futures::{
+    future::{self, try_join_all},
+    stream::{Stream, StreamExt},
+};
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
+use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt},
-    time::Duration
+    time::Duration,
 };
-
-use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
 use crate::deepq::api::{
@@ -48,26 +53,43 @@ pub struct User {
     pub games: i32,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Game {
     pub id: GameId,
     pub white: UserId,
     pub black: UserId,
     pub emts: Option<Vec<i32>>,
-    pub pgn: String, // TODO: this should be more strongly typed.
+
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, San>")]
+    pub pgn: Vec<San>,
     pub analysis: Option<Vec<Eval>>,
 }
 
-impl From<&Game> for CreateGame {
-    fn from(g: &Game) -> CreateGame {
+fn uci_from_san(pgn: &Vec<San>) -> Result<Vec<Uci>> {
+    let mut pos = Chess::default();
+    let mut ret_val = Vec::new();
+    for san in pgn.iter() {
+        let m = san.to_move(&pos)?;
+        // TODO: the castling mode needs to come from the game!!
+        ret_val.push(Uci::from_move(&m, CastlingMode::Standard));
+        pos = pos.play(&m).map_err(|_pos| Error::PositionError)?;
+    }
+    Ok(ret_val)
+}
+
+impl TryFrom<&Game> for CreateGame {
+    type Error = Error;
+
+    fn try_from(g: &Game) -> StdResult<CreateGame, Self::Error> {
         let g = g.clone();
-        CreateGame {
+        Ok(CreateGame {
             game_id: g.id,
             emts: g.emts.unwrap_or_else(Vec::new),
-            pgn: g.pgn,
+            pgn: uci_from_san(&g.pgn)?,
             black: Some(g.black),
             white: Some(g.white),
-        }
+        })
     }
 }
 
@@ -127,21 +149,19 @@ impl FromStr for StreamMsg {
 }
 
 pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
-    try_join_all(insert_many_games(
-        db.clone(),
-        request.games.iter().map(Into::into),
-    ))
-    .await?;
+    let games_with_uci = request
+        .games
+        .iter()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<CreateGame>>>()?;
+    try_join_all(insert_many_games(db.clone(), games_with_uci.iter().cloned())).await?;
     let fishnet_jobs: Vec<CreateJob> = request.clone().into();
     try_join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await?;
     insert_one_report(db.clone(), request.into()).await?;
     Ok(())
 }
 
-pub async fn stream(
-    url: &str,
-    api_key: &str,
-) -> Result<impl Stream<Item = Result<StreamMsg>>> {
+pub async fn stream(url: &str, api_key: &str) -> Result<impl Stream<Item = Result<StreamMsg>>> {
     let client = reqwest::Client::builder()
         .tcp_keepalive(Duration::from_millis(1000))
         .build()?;
@@ -155,7 +175,8 @@ pub async fn stream(
         response
             .bytes_stream()
             .map(|i| i.map_err(|e| IoError::new(ErrorKind::Other, e))),
-    ).lines()
-        .filter(|line| future::ready(!line.as_ref().unwrap().is_empty()))
-        .map(|line| FromStr::from_str(&(line?))))
+    )
+    .lines()
+    .filter(|line| future::ready(!line.as_ref().unwrap().is_empty()))
+    .map(|line| FromStr::from_str(&(line?))))
 }

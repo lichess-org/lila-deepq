@@ -22,11 +22,14 @@ use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
     options::UpdateOptions,
 };
-use shakmaty::fen::Fen;
+use shakmaty::{
+    fen::Fen,
+    uci::Uci,
+};
 
 use crate::db::DbConn;
 use crate::deepq::model as m;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 #[derive(Debug, Clone)]
 pub struct CreateReport {
@@ -68,10 +71,11 @@ pub fn starting_position(_game: m::Game) -> Fen {
 
 #[derive(Debug, Clone)]
 pub struct CreateGame {
-    pub game_id: m::GameId, // NOTE: I am purposefully renaming this here, from _id.
+    // NOTE: I am purposefully renaming this here, from _id.
     //       Maybe I'll regret it later
+    pub game_id: m::GameId,
     pub emts: Vec<i32>,
-    pub pgn: String,
+    pub pgn: Vec<Uci>,
     pub black: Option<m::UserId>,
     pub white: Option<m::UserId>,
 }

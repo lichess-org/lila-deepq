@@ -18,11 +18,12 @@
 use std::convert::Infallible;
 use std::result::Result as StdResult;
 use std::str::FromStr;
+use std::num::NonZeroU8;
 
-use log::debug;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, skip_serializing_none, DisplayFromStr};
-use shakmaty::fen::Fen;
+use serde_with::{serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator};
+use shakmaty::{fen::Fen, uci::Uci};
 use warp::{
     filters::{method, BoxedFilter},
     http, path, reject,
@@ -83,19 +84,15 @@ pub struct Nodes {
     classical: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RequestedAnalysis {
-    depth: Option<u8>,
-    multipv: Option<bool>,
-}
-
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkInfo {
     #[serde(rename = "type")]
     _type: WorkType,
     id: String,
     nodes: Nodes,
-    analysis: Option<RequestedAnalysis>,
+    depth: Option<u8>,
+    multipv: Option<NonZeroU8>,
 }
 
 #[serde_as]
@@ -106,8 +103,8 @@ pub struct Job {
     #[serde_as(as = "DisplayFromStr")]
     position: Fen,
     variant: Variant,
-    // TODO: make this a real type as well
-    moves: String,
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
+    moves: Vec<Uci>,
 
     #[serde(rename = "skipPositions")]
     skip_positions: Vec<u8>,
@@ -245,15 +242,16 @@ fn nodes_for_job(job: &m::Job) -> Nodes {
 }
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
-fn requested_analysis_for_job(job: &m::Job) -> Option<RequestedAnalysis> {
+fn multipv_for_job(job: &m::Job) -> Option<NonZeroU8> {
     match job.analysis_type {
-        m::AnalysisType::Deep => Some(RequestedAnalysis {
-            // TODO: what is the default that we tend to use for CR?
-            depth: None,
-            multipv: Some(true),
-        }),
+        m::AnalysisType::Deep => NonZeroU8::new(5u8),
         _ => None,
     }
+}
+
+fn depth_for_job(_job: &m::Job) -> Option<u8> {
+    // TODO: Currently none of them request a specific depth, I thought they did?
+    None
 }
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
@@ -267,6 +265,7 @@ fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
 }
 
 async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
+    info!("acquire_job > {}", api_user.name);
     // TODO: Multiple active jobs are allowed. Instead we should unassign old ones that
     //       are not finished.
     // NOTE: not using .map because of unstable async lambdas
@@ -300,7 +299,8 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
                             id: job._id.to_string(),
                             _type: WorkType::Analysis,
                             nodes: nodes_for_job(&job),
-                            analysis: requested_analysis_for_job(&job),
+                            multipv: multipv_for_job(&job),
+                            depth: depth_for_job(&job),
                         },
                     })
                 },
@@ -315,7 +315,16 @@ async fn abort_job(
     api_user: m::ApiUser,
     job_id: Id,
 ) -> StdResult<Option<()>, Rejection> {
+    info!("abort_job > {}", api_user.name);
     api::unassign_job(db.clone(), api_user, job_id.into()).await?;
+    Ok(None) // None because we're going to return no-content
+}
+
+async fn save_job_analysis(
+    db: DbConn, api_user: m::ApiUser, job_id: Id, analysis: AnalysisReport
+) -> StdResult<Option<Job>, Rejection> {
+    info!("save_job_analysis");
+    debug!("AnalysisReport: {:?}", analysis);
     Ok(None)
 }
 
@@ -326,12 +335,17 @@ async fn check_key_validity(db: DbConn, key: String) -> StdResult<String, Reject
         .map(|_| String::new())
 }
 
+#[derive(Serialize)]
+struct FishnetAnalysisStatus {
+    user: api::QStatus,
+    system: api::QStatus,
+    deep: api::QStatus,
+}
+
 #[skip_serializing_none]
 #[derive(Serialize)]
 struct FishnetStatus {
-    analysis: api::QStatus,
-    system: api::QStatus,
-    deep: api::QStatus,
+    analysis: FishnetAnalysisStatus,
     key: Option<api::KeyStatus>,
 }
 
@@ -339,16 +353,13 @@ async fn fishnet_status(
     db: DbConn,
     api_user: Option<m::ApiUser>,
 ) -> StdResult<FishnetStatus, Rejection> {
-    let analysis = api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?;
+    info!("status");
+    let user = api::q_status(db.clone(), m::AnalysisType::UserAnalysis).await?;
     let system = api::q_status(db.clone(), m::AnalysisType::SystemAnalysis).await?;
     let deep = api::q_status(db.clone(), m::AnalysisType::Deep).await?;
     let key = api::key_status(api_user.clone());
-    Ok(FishnetStatus {
-        analysis,
-        system,
-        deep,
-        key,
-    })
+    let analysis = FishnetAnalysisStatus{user, system, deep};
+    Ok(FishnetStatus {analysis, key})
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
@@ -376,6 +387,15 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
         .and_then(abort_job)
         .and_then(json_object_or_no_content::<()>);
 
+    let analysis = path("analysis")
+        .and(method::post())
+        .and(with_db(db.clone()))
+        .and(authorization_required.clone())
+        .and(path::param())
+        .and(warp::body::json::<AnalysisReport>())
+        .and_then(save_job_analysis)
+        .and_then(json_object_or_no_content::<Job>);
+
     let valid_key = path("key")
         .and(method::get())
         .and(with_db(db.clone()))
@@ -396,6 +416,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     acquire
         .or(abort)
+        .or(analysis)
         .or(valid_key)
         .or(status)
         .recover(recover)

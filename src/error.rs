@@ -91,6 +91,12 @@ pub enum Error {
     #[error("mongodb::bson::oid::Error")]
     BsonOidError(#[from] mongodb::bson::oid::Error),
 
+    #[error("shakmaty::san::SanError")]
+    SanError(#[from] shakmaty::san::SanError),
+
+    #[error("shakmaty::Chess")]
+    PositionError,
+
     #[error("Unable to deserialize something")]
     DeserializationError,
 

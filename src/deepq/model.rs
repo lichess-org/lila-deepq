@@ -18,6 +18,8 @@
 use derive_more::{Display, From};
 use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
+use shakmaty::uci::Uci;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct UserId(pub String);
@@ -91,11 +93,13 @@ pub struct Eval {
 }
 
 // TODO: this should come directly from the lila db, why store this more than once?
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Game {
     pub _id: GameId,
     pub emts: Vec<i32>,
-    pub pgn: String,
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
+    pub pgn: Vec<Uci>,
     pub black: Option<UserId>,
     pub white: Option<UserId>,
 }
