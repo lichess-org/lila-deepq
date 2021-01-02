@@ -32,8 +32,12 @@ use crate::db::DbConn;
 use crate::error::{Error, HttpError};
 
 /// Unauthorized rejection
-pub fn unauthorized() -> Rejection {
-    reject::custom(HttpError::Unauthorized)
+pub fn forbidden() -> Rejection {
+    reject::custom(HttpError::Forbidden)
+}
+
+pub fn unauthenticated() -> Rejection {
+    reject::custom(HttpError::Unauthenticated)
 }
 
 /// extract an ApiUser from the json body request
@@ -99,7 +103,7 @@ pub async fn recover(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.is_not_found() {
         code = http::StatusCode::NOT_FOUND;
         message = "NOT_FOUND";
-    } else if let Some(HttpError::Unauthorized) = err.find() {
+    } else if let Some(HttpError::Unauthenticated) = err.find() {
         code = http::StatusCode::UNAUTHORIZED;
         message = "UNAUTHORIZED";
     } else if let Some(HttpError::Forbidden) = err.find() {

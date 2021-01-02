@@ -34,11 +34,11 @@ pub enum HttpError {
     #[error("Unauthorized")]
     MalformedHeader,
 
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Unauthenticated")]
+    Unauthenticated,
 
     #[error("Forbidden")]
-    Forbidden,
+    Forbidden, // Insufficient permissions
 }
 
 impl reject::Reject for HttpError {}
