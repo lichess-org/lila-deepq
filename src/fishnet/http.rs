@@ -20,6 +20,7 @@ use std::num::NonZeroU8;
 use std::result::Result as StdResult;
 use std::str::FromStr;
 
+
 use log::{debug, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{
@@ -36,20 +37,20 @@ use warp::{
 use crate::db::DbConn;
 use crate::deepq::api::{find_game, starting_position};
 use crate::error::{Error, HttpError};
-use crate::fishnet::api;
-use crate::fishnet::model as m;
+use super::{api, model as m};
 use crate::http::{
-    json_object_or_no_content, recover, required_parameter, unauthenticated, with_db, Id,
+    json_object_or_no_content, recover, required_or_unauthenticated,
+    forbidden, with_db, Id,
 };
 
 // TODO: make this complete for all of the variant types we should support.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Variant {
     #[serde(rename = "standard")]
     Standard,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum WorkType {
     #[serde(rename = "analysis")]
     Analysis,
@@ -57,14 +58,14 @@ pub enum WorkType {
     Move,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RequestInfo {
     version: String,
     #[serde(rename = "apikey")]
     api_key: m::Key,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FishnetRequest {
     fishnet: RequestInfo,
 }
@@ -75,7 +76,7 @@ impl From<FishnetRequest> for m::Key {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AcquireRequest {
     fishnet: RequestInfo,
 }
@@ -112,36 +113,36 @@ pub struct Job {
     skip_positions: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum StockfishFlavor {
     Nnue,
     Classical,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StockfishType {
     flavor: StockfishFlavor,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlyScore {
     cp: Option<i32>,
     mate: Option<i32>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SkippedAnalysis {
     skipped: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EmptyAnalysis {
     depth: i32,
     score: PlyScore,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FullAnalysis {
     pv: String, // TODO: better type here?
     depth: i32,
@@ -151,19 +152,19 @@ pub struct FullAnalysis {
     nps: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum PlyAnalysis {
-    Skipped(SkippedAnalysis),
     Full(FullAnalysis),
+    Skipped(SkippedAnalysis),
     Empty(EmptyAnalysis),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalysisReport {
     fishnet: RequestInfo,
     stockfish: StockfishType,
-    analysis: Vec<PlyAnalysis>,
+    analysis: Vec<Option<PlyAnalysis>>,
 }
 
 impl From<AnalysisReport> for m::Key {
@@ -193,9 +194,57 @@ impl From<HeaderKey> for m::Key {
     }
 }
 
-async fn authorized_from_api_user(api_user: m::ApiUser) -> StdResult<m::ApiUser, Rejection> {
-    // TODO: This will need to verify the key hasn't been deactivated
-    Ok(api_user)
+impl From<m::ApiUser> for m::Key {
+    fn from(api_user: m::ApiUser) -> m::Key {
+        api_user.key
+    }
+}
+
+#[derive(Clone)]
+struct Authorized<T>
+where
+    T: Into<m::Key> + Clone,
+{
+    val: T,
+    api_user: m::ApiUser,
+}
+
+impl<T> Authorized<T>
+where
+    T: Into<m::Key> + Clone,
+{
+    async fn new(db: DbConn, val: T) -> StdResult<Authorized<T>, Rejection> {
+        let api_user = api::get_api_user(db, val.clone().into())
+            .await?
+            .ok_or_else(forbidden)?;
+        Ok(Authorized::<T> { val, api_user })
+    }
+
+    fn val(&self) -> T {
+        self.val.clone()
+    }
+
+    fn api_user(&self) -> m::ApiUser {
+        self.api_user.clone()
+    }
+
+    fn map<T2, F>(&self, f: F) -> Authorized<T2>
+    where
+        F: Fn(T) -> T2,
+        T2: Into<m::Key> + Clone,
+    {
+        Authorized::<T2> {
+            val: f(self.val()),
+            api_user: self.api_user(),
+        }
+    }
+}
+
+async fn authorize<T>(db: DbConn, t: T) -> StdResult<Authorized<T>, Rejection>
+where
+    T: Into<m::Key> + Clone,
+{
+    Ok(Authorized::<T>::new(db.clone(), t).await?)
 }
 
 async fn api_user_from_key<T>(
@@ -206,40 +255,6 @@ where
     T: Into<m::Key>,
 {
     Ok(api::get_api_user(db, payload_with_key.into()).await?)
-}
-
-async fn api_user_with_payload_from_payload_key<T>(
-    db: DbConn,
-    payload_with_key: T,
-) -> StdResult<(Option<m::ApiUser>, T), Rejection>
-where
-    T: Into<m::Key> + Clone,
-{
-    Ok((
-        api::get_api_user(db, payload_with_key.clone().into()).await?,
-        payload_with_key,
-    ))
-}
-
-fn authentication_from_body_with_payload<T>(
-    db: DbConn,
-) -> impl Filter<Extract = ((Option<m::ApiUser>, T),), Error = Rejection> + Clone + Send + Sync
-where
-    T: Into<m::Key> + DeserializeOwned + Clone + Send + Sync,
-{
-    warp::any()
-        .map(move || db.clone())
-        .and(warp::body::json::<T>())
-        .and_then(api_user_with_payload_from_payload_key)
-}
-
-fn authorized_from_body_with_payload<T>(
-    db: DbConn,
-) -> impl Filter<Extract = ((m::ApiUser, T),), Error = Rejection> + Clone + Send + Sync
-where
-    T: Into<m::Key> + DeserializeOwned + Clone + Send + Sync,
-{
-    required_parameter(authentication_from_body_with_payload(db), &unauthenticated)
 }
 
 fn extract_key_from_header() -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone {
@@ -268,11 +283,15 @@ fn authentication_from_header(
         .unify()
 }
 
-fn authorized_from_header(
+fn authorized_json_body<T>(
     db: DbConn,
-) -> impl Filter<Extract = (m::ApiUser,), Error = Rejection> + Clone {
-    required_parameter(authentication_from_header(db), &unauthenticated)
-        .and_then(authorized_from_api_user)
+) -> impl Filter<Extract = (Authorized<T>,), Error = Rejection> + Clone
+where T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned
+{
+    warp::any()
+        .and(with_db(db.clone()))
+        .and(warp::body::json::<T>())
+        .and_then(authorize::<T>)
 }
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
@@ -317,7 +336,11 @@ fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
     }
 }
 
-async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>, Rejection> {
+async fn acquire_job(
+    db: DbConn,
+    api_user: Authorized<m::ApiUser>,
+) -> StdResult<Option<Job>, Rejection> {
+    let api_user = api_user.val();
     info!("acquire_job > {}", api_user.name);
     // TODO: Multiple active jobs are allowed. Instead we should unassign old ones that
     //       are not finished.
@@ -341,8 +364,7 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
                     None // acquire_job(db.clone(), api_user.clone())?
                 }
                 Some(game) => {
-                    debug!("Some(game) = {:?}", game);
-                    Some(Job {
+                    let job = Job {
                         game_id: job.game_id.to_string(),
                         position: starting_position(game.clone()),
                         variant: Variant::Standard,
@@ -355,7 +377,9 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
                             multipv: multipv_for_job(&job),
                             depth: depth_for_job(&job),
                         },
-                    })
+                    };
+                    debug!("Some(job) = {:?}", job);
+                    Some(job)
                 }
             }
         }
@@ -365,20 +389,21 @@ async fn acquire_job(db: DbConn, api_user: m::ApiUser) -> StdResult<Option<Job>,
 
 async fn abort_job(
     db: DbConn,
-    api_user: m::ApiUser,
+    api_user: Authorized<m::ApiUser>,
     job_id: Id,
 ) -> StdResult<Option<()>, Rejection> {
+    let api_user = api_user.val();
     info!("abort_job > {}", api_user.name);
     api::unassign_job(db.clone(), api_user, job_id.into()).await?;
     Ok(None) // None because we're going to return no-content
 }
 
 async fn save_job_analysis(
-    db: DbConn,
-    api_user: m::ApiUser,
-    job_id: Id,
-    analysis: AnalysisReport,
+    _db: DbConn,
+    _job_id: Id,
+    analysis: Authorized<AnalysisReport>,
 ) -> StdResult<Option<Job>, Rejection> {
+    let analysis = analysis.val();
     info!("save_job_analysis");
     debug!("AnalysisReport: {:?}", analysis);
     Ok(None)
@@ -419,17 +444,33 @@ async fn fishnet_status(
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
+    let authenticated = api_user_from_header(db.clone());
+    let authentication_required =
+        authenticated.clone().and_then(required_or_unauthenticated);
+
+    let header_authorization_required = warp::any()
+        .and(with_db(db.clone()))
+        .and(authentication_required.clone())
+        .and_then(authorize);
+
+    let authorized_api_user = warp::any()
+        .and(header_authorization_required)
+        .or(authorized_json_body(db.clone())
+                .map(|fr: Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user()))
+        )
+        .unify();
+
     let acquire = path("acquire")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_from_header(db.clone()))
+        .and(authorized_api_user.clone())
         .and_then(acquire_job)
         .and_then(json_object_or_no_content::<Job>);
 
     let abort = path("abort")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_from_header(db.clone()))
+        .and(authorized_api_user.clone())
         .and(path::param())
         .and_then(abort_job)
         .and_then(json_object_or_no_content::<()>);
@@ -437,9 +478,8 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let analysis = path("analysis")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_from_header(db.clone()))
         .and(path::param())
-        .and(warp::body::json::<AnalysisReport>())
+        .and(authorized_json_body(db.clone()))
         .and_then(save_job_analysis)
         .and_then(json_object_or_no_content::<Job>);
 

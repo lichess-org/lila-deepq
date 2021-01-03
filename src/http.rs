@@ -20,6 +20,7 @@ use std::marker::Send;
 use std::result::Result as StdResult;
 use std::str::FromStr;
 
+use futures::future::{self, Future};
 use mongodb::bson::oid::ObjectId;
 use serde::Serialize;
 use warp::{
@@ -51,6 +52,20 @@ where
     E: Fn() -> Rejection + Clone + Send + Sync + 'a,
 {
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
+}
+
+pub fn required_or_unauthenticated<'a, T>(o: Option<T>) -> impl Future<Output=StdResult<T, Rejection>> {
+    if let Some(t) = o {  
+        return future::ok(t);
+    }
+    future::err(unauthenticated())
+}
+
+pub fn required_or_forbidden<'a, T>(o: Option<T>) ->  impl Future<Output=StdResult<T, Rejection>> {
+    if let Some(t) = o {  
+        return future::ok(t);
+    }
+    future::err(forbidden())
 }
 
 pub struct Id(ObjectId);
