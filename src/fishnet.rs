@@ -16,5 +16,6 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod api;
+pub mod filters;
 pub mod http;
 pub mod model;

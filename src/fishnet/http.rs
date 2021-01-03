@@ -15,14 +15,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::convert::Infallible;
 use std::num::NonZeroU8;
 use std::result::Result as StdResult;
-use std::str::FromStr;
-
 
 use log::{debug, info};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{
     serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator,
 };
@@ -34,14 +31,10 @@ use warp::{
     Filter, Rejection,
 };
 
+use super::{api, filters as f, model as m};
 use crate::db::DbConn;
 use crate::deepq::api::{find_game, starting_position};
-use crate::error::{Error, HttpError};
-use super::{api, model as m};
-use crate::http::{
-    json_object_or_no_content, recover, required_or_unauthenticated,
-    forbidden, with_db, Id,
-};
+use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
 
 // TODO: make this complete for all of the variant types we should support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -173,127 +166,6 @@ impl From<AnalysisReport> for m::Key {
     }
 }
 
-#[derive(Debug)]
-pub struct HeaderKey(pub m::Key);
-
-impl FromStr for HeaderKey {
-    type Err = Error;
-
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        Ok(HeaderKey(m::Key(
-            s.strip_prefix("Bearer ")
-                .ok_or(HttpError::MalformedHeader)?
-                .to_string(),
-        )))
-    }
-}
-
-impl From<HeaderKey> for m::Key {
-    fn from(hk: HeaderKey) -> m::Key {
-        hk.0
-    }
-}
-
-impl From<m::ApiUser> for m::Key {
-    fn from(api_user: m::ApiUser) -> m::Key {
-        api_user.key
-    }
-}
-
-#[derive(Clone)]
-struct Authorized<T>
-where
-    T: Into<m::Key> + Clone,
-{
-    val: T,
-    api_user: m::ApiUser,
-}
-
-impl<T> Authorized<T>
-where
-    T: Into<m::Key> + Clone,
-{
-    async fn new(db: DbConn, val: T) -> StdResult<Authorized<T>, Rejection> {
-        let api_user = api::get_api_user(db, val.clone().into())
-            .await?
-            .ok_or_else(forbidden)?;
-        Ok(Authorized::<T> { val, api_user })
-    }
-
-    fn val(&self) -> T {
-        self.val.clone()
-    }
-
-    fn api_user(&self) -> m::ApiUser {
-        self.api_user.clone()
-    }
-
-    fn map<T2, F>(&self, f: F) -> Authorized<T2>
-    where
-        F: Fn(T) -> T2,
-        T2: Into<m::Key> + Clone,
-    {
-        Authorized::<T2> {
-            val: f(self.val()),
-            api_user: self.api_user(),
-        }
-    }
-}
-
-async fn authorize<T>(db: DbConn, t: T) -> StdResult<Authorized<T>, Rejection>
-where
-    T: Into<m::Key> + Clone,
-{
-    Ok(Authorized::<T>::new(db.clone(), t).await?)
-}
-
-async fn api_user_from_key<T>(
-    db: DbConn,
-    payload_with_key: T,
-) -> StdResult<Option<m::ApiUser>, Rejection>
-where
-    T: Into<m::Key>,
-{
-    Ok(api::get_api_user(db, payload_with_key.into()).await?)
-}
-
-fn extract_key_from_header() -> impl Filter<Extract = (HeaderKey,), Error = Rejection> + Clone {
-    warp::any().and(warp::header::<HeaderKey>("authorization"))
-}
-
-fn api_user_from_header(
-    db: DbConn,
-) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Rejection> + Clone {
-    warp::any()
-        .map(move || db.clone())
-        .and(extract_key_from_header())
-        .and_then(api_user_from_key)
-}
-
-fn no_api_user() -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
-    warp::any().map(move || None)
-}
-
-fn authentication_from_header(
-    db: DbConn,
-) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
-    warp::any()
-        .and(api_user_from_header(db.clone()))
-        .or(no_api_user())
-        .unify()
-}
-
-fn authorized_json_body<T>(
-    db: DbConn,
-) -> impl Filter<Extract = (Authorized<T>,), Error = Rejection> + Clone
-where T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned
-{
-    warp::any()
-        .and(with_db(db.clone()))
-        .and(warp::body::json::<T>())
-        .and_then(authorize::<T>)
-}
-
 // TODO: get this from config or env? or lila? (probably lila, tbh)
 fn nodes_for_job(job: &m::Job) -> Nodes {
     match job.analysis_type {
@@ -338,7 +210,7 @@ fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
 
 async fn acquire_job(
     db: DbConn,
-    api_user: Authorized<m::ApiUser>,
+    api_user: f::Authorized<m::ApiUser>,
 ) -> StdResult<Option<Job>, Rejection> {
     let api_user = api_user.val();
     info!("acquire_job > {}", api_user.name);
@@ -389,7 +261,7 @@ async fn acquire_job(
 
 async fn abort_job(
     db: DbConn,
-    api_user: Authorized<m::ApiUser>,
+    api_user: f::Authorized<m::ApiUser>,
     job_id: Id,
 ) -> StdResult<Option<()>, Rejection> {
     let api_user = api_user.val();
@@ -401,7 +273,7 @@ async fn abort_job(
 async fn save_job_analysis(
     _db: DbConn,
     _job_id: Id,
-    analysis: Authorized<AnalysisReport>,
+    analysis: f::Authorized<AnalysisReport>,
 ) -> StdResult<Option<Job>, Rejection> {
     let analysis = analysis.val();
     info!("save_job_analysis");
@@ -444,20 +316,18 @@ async fn fishnet_status(
 }
 
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
-    let authenticated = api_user_from_header(db.clone());
-    let authentication_required =
-        authenticated.clone().and_then(required_or_unauthenticated);
+    let authenticated = f::api_user_from_header(db.clone());
+    let authentication_required = authenticated.clone().and_then(required_or_unauthenticated);
 
     let header_authorization_required = warp::any()
         .and(with_db(db.clone()))
         .and(authentication_required.clone())
-        .and_then(authorize);
+        .and_then(f::authorize);
 
     let authorized_api_user = warp::any()
         .and(header_authorization_required)
-        .or(authorized_json_body(db.clone())
-                .map(|fr: Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user()))
-        )
+        .or(f::authorized_json_body(db.clone())
+            .map(|fr: f::Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user())))
         .unify();
 
     let acquire = path("acquire")
@@ -479,7 +349,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
         .and(method::post())
         .and(with_db(db.clone()))
         .and(path::param())
-        .and(authorized_json_body(db.clone()))
+        .and(f::authorized_json_body(db.clone()))
         .and_then(save_job_analysis)
         .and_then(json_object_or_no_content::<Job>);
 
@@ -492,7 +362,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let status = path("status")
         .and(method::get())
         .and(with_db(db.clone()))
-        .and(authentication_from_header(db))
+        .and(f::authentication_from_header(db))
         .and_then(fishnet_status)
         .map(|status| {
             Ok(reply::with_status(
