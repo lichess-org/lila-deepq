@@ -17,5 +17,5 @@
 
 pub mod api;
 pub mod filters;
-pub mod http;
+pub mod handlers;
 pub mod model;

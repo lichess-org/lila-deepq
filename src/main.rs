@@ -45,7 +45,7 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     let conn = db::connection().await?;
 
     info!("Mounting urls...");
-    let app = fishnet::http::mount(conn.clone());
+    let app = fishnet::handlers::mount(conn.clone());
 
     info!("Starting server...");
     warp::serve(warp::path("fishnet").and(app))
