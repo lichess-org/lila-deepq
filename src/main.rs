@@ -20,26 +20,50 @@ pub mod deepq;
 pub mod error;
 pub mod fishnet;
 pub mod http;
-//mod irwin;
-//mod lichess;
+pub mod irwin;
+pub mod lichess;
 
+extern crate clap;
 extern crate dotenv;
 extern crate futures;
 extern crate pretty_env_logger;
 extern crate serde_json;
 extern crate serde_with;
-#[macro_use]
 extern crate log;
 
+use std::env;
 use std::result::Result as StdResult;
 
+use clap::{App, SubCommand};
 use dotenv::dotenv;
+use futures::stream::StreamExt;
+use log::{error, info, warn};
+use tokio::time::{delay_for, Duration};
 use warp::Filter;
 
 #[tokio::main]
 async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
+    let matches = App::new(env!("CARGO_PKG_NAME"))
+                      .version(env!("CARGO_PKG_VERSION"))
+                      .author(env!("CARGO_PKG_AUTHORS"))
+                      .about(env!("CARGO_PKG_DESCRIPTION"))
+                      .subcommand(SubCommand::with_name("deepq_webserver"))
+                      .subcommand(SubCommand::with_name("deepq_irwin_job_listener"))
+                      .get_matches();
+
+    if let Some(_matches) = matches.subcommand_matches("deepq_webserver") {
+        return deepq_web().await;
+    }
+    if let Some(_matches) = matches.subcommand_matches("deepq_irwin_job_listener") {
+        return deepq_irwin_job_listener().await;
+    }
+    Ok(())
+}
+
+async fn deepq_web() -> StdResult<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
+    info!("Reading config...");
+    dotenv().ok();
 
     info!("Connecting to database...");
     let conn = db::connection().await?;
@@ -53,4 +77,42 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
         .await;
 
     Ok(())
+}
+
+async fn deepq_irwin_job_listener() -> StdResult<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+    info!("Reading config...");
+    dotenv().ok();
+
+    let api_url = env::var("LILA_DEEPQ_IRWIN_STREAM_URL")
+        .unwrap_or_else(|_| "https://lichess.org/api/stream/irwin".to_string());
+    let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
+
+    let conn = db::connection().await?;
+
+    info!("Starting up...");
+    loop {
+        info!("Connecting...");
+        let mut stream = irwin::stream(&api_url, &api_key).await?;
+
+        info!("Reading stream...");
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Ok(irwin::StreamMsg::KeepAlive(_)) => info!("keepAlive received"),
+                Ok(irwin::StreamMsg::Request(request)) => {
+                    info!(
+                        "{:?} report: {} for {} games",
+                        request.origin,
+                        request.user.id.0,
+                        request.games.len()
+                    );
+                    irwin::add_to_queue(conn.clone(), request).await?;
+                }
+                Err(e) => error!("Error parsing message from lichess:\n{:?}", e),
+            }
+        }
+
+        warn!("Disconnected, sleeping for 5s...");
+        delay_for(Duration::from_millis(5000)).await;
+    }
 }
