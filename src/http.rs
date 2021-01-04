@@ -20,6 +20,7 @@ use std::marker::Send;
 use std::result::Result as StdResult;
 use std::str::FromStr;
 
+use futures::future::{self, Future};
 use mongodb::bson::oid::ObjectId;
 use serde::Serialize;
 use warp::{
@@ -32,8 +33,12 @@ use crate::db::DbConn;
 use crate::error::{Error, HttpError};
 
 /// Unauthorized rejection
-pub fn unauthorized() -> Rejection {
-    reject::custom(HttpError::Unauthorized)
+pub fn forbidden() -> Rejection {
+    reject::custom(HttpError::Forbidden)
+}
+
+pub fn unauthenticated() -> Rejection {
+    reject::custom(HttpError::Unauthenticated)
 }
 
 /// extract an ApiUser from the json body request
@@ -47,6 +52,20 @@ where
     E: Fn() -> Rejection + Clone + Send + Sync + 'a,
 {
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
+}
+
+pub fn required_or_unauthenticated<'a, T>(o: Option<T>) -> impl Future<Output=StdResult<T, Rejection>> {
+    if let Some(t) = o {  
+        return future::ok(t);
+    }
+    future::err(unauthenticated())
+}
+
+pub fn required_or_forbidden<'a, T>(o: Option<T>) ->  impl Future<Output=StdResult<T, Rejection>> {
+    if let Some(t) = o {  
+        return future::ok(t);
+    }
+    future::err(forbidden())
 }
 
 pub struct Id(ObjectId);
@@ -99,7 +118,7 @@ pub async fn recover(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.is_not_found() {
         code = http::StatusCode::NOT_FOUND;
         message = "NOT_FOUND";
-    } else if let Some(HttpError::Unauthorized) = err.find() {
+    } else if let Some(HttpError::Unauthenticated) = err.find() {
         code = http::StatusCode::UNAUTHORIZED;
         message = "UNAUTHORIZED";
     } else if let Some(HttpError::Forbidden) = err.find() {
