@@ -19,13 +19,12 @@ use std::convert::Infallible;
 use std::result::Result as StdResult;
 use std::str::FromStr;
 
-
 use serde::de::DeserializeOwned;
 use warp::{Filter, Rejection};
 
+use super::{api, model as m};
 use crate::db::DbConn;
 use crate::error::{Error, HttpError};
-use super::{api, model as m};
 use crate::http::{forbidden, with_db};
 
 #[derive(Debug)]
@@ -141,11 +140,11 @@ pub fn authentication_from_header(
 pub fn authorized_json_body<T>(
     db: DbConn,
 ) -> impl Filter<Extract = (Authorized<T>,), Error = Rejection> + Clone
-where T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned
+where
+    T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned,
 {
     warp::any()
         .and(with_db(db.clone()))
         .and(warp::body::json::<T>())
         .and_then(authorize::<T>)
 }
-
