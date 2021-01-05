@@ -354,10 +354,10 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     // NOTE: this supports the old fishnet 1.x style of authorization
     //       which I am not going to worry about supporting out of the box.
     //let authorized_api_user = warp::any()
-        //.and(header_authorization_required)
-        //.or(f::authorized_json_body(db.clone())
-            //.map(|fr: f::Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user())))
-        //.unify();
+    //.and(header_authorization_required)
+    //.or(f::authorized_json_body(db.clone())
+    //.map(|fr: f::Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user())))
+    //.unify();
 
     let acquire = path("acquire")
         .and(method::post())
