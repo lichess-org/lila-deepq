@@ -47,14 +47,14 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
                       .version(env!("CARGO_PKG_VERSION"))
                       .author(env!("CARGO_PKG_AUTHORS"))
                       .about(env!("CARGO_PKG_DESCRIPTION"))
-                      .subcommand(SubCommand::with_name("deepq_webserver"))
-                      .subcommand(SubCommand::with_name("deepq_irwin_job_listener"))
+                      .subcommand(SubCommand::with_name("webserver"))
+                      .subcommand(SubCommand::with_name("irwin_job_listener"))
                       .get_matches();
 
-    if let Some(_matches) = matches.subcommand_matches("deepq_webserver") {
+    if let Some(_matches) = matches.subcommand_matches("webserver") {
         return deepq_web().await;
     }
-    if let Some(_matches) = matches.subcommand_matches("deepq_irwin_job_listener") {
+    if let Some(_matches) = matches.subcommand_matches("irwin_job_listener") {
         return deepq_irwin_job_listener().await;
     }
     Ok(())
