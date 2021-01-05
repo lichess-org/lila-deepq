@@ -351,23 +351,25 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
         .and(authentication_required.clone())
         .and_then(f::authorize);
 
-    let authorized_api_user = warp::any()
-        .and(header_authorization_required)
-        .or(f::authorized_json_body(db.clone())
-            .map(|fr: f::Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user())))
-        .unify();
+    // NOTE: this supports the old fishnet 1.x style of authorization
+    //       which I am not going to worry about supporting out of the box.
+    //let authorized_api_user = warp::any()
+        //.and(header_authorization_required)
+        //.or(f::authorized_json_body(db.clone())
+            //.map(|fr: f::Authorized<FishnetRequest>| fr.clone().map(|_| fr.api_user())))
+        //.unify();
 
     let acquire = path("acquire")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_api_user.clone())
+        .and(header_authorization_required.clone())
         .and_then(acquire_job)
         .and_then(json_object_or_no_content::<Job>);
 
     let abort = path("abort")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_api_user.clone())
+        .and(header_authorization_required.clone())
         .and(path::param())
         .and_then(abort_job)
         .and_then(json_object_or_no_content::<()>);
@@ -375,7 +377,7 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let analysis = path("analysis")
         .and(method::post())
         .and(with_db(db.clone()))
-        .and(authorized_api_user.clone())
+        .and(header_authorization_required.clone())
         .and(path::param())
         .and(warp::body::json())
         .and_then(save_job_analysis)
