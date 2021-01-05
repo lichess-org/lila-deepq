@@ -272,10 +272,11 @@ async fn abort_job(
 
 async fn save_job_analysis(
     _db: DbConn,
+    _api_user: f::Authorized<m::ApiUser>,
     _job_id: Id,
-    analysis: f::Authorized<AnalysisReport>,
+    analysis: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
-    let analysis = analysis.val();
+    let _api_user = _api_user.val();
     info!("save_job_analysis");
     debug!("AnalysisReport: {:?}", analysis);
     Ok(None)
@@ -356,8 +357,9 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let analysis = path("analysis")
         .and(method::post())
         .and(with_db(db.clone()))
+        .and(authorized_api_user.clone())
         .and(path::param())
-        .and(f::authorized_json_body(db.clone()))
+        .and(warp::body::json())
         .and_then(save_job_analysis)
         .and_then(json_object_or_no_content::<Job>);
 
