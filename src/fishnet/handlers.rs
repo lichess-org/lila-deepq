@@ -315,6 +315,14 @@ async fn fishnet_status(
     Ok(FishnetStatus { analysis, key })
 }
 
+fn _log_body() -> impl Filter<Extract = (), Error = Rejection> + Copy {
+    warp::body::bytes()
+        .map(|b: warp::hyper::body::Bytes| {
+            println!("Request body: {:?}", b);
+        })
+        .untuple_one()
+}
+
 pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
     let authenticated = f::api_user_from_header(db.clone());
     let authentication_required = authenticated.clone().and_then(required_or_unauthenticated);
