@@ -119,9 +119,11 @@ pub struct StockfishType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PlyScore {
-    cp: Option<i32>,
-    mate: Option<i32>,
+pub enum Score {
+    #[serde(rename = "cp")]
+    Cp(i64),
+    #[serde(rename = "mate")]
+    Mate(i64),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -131,24 +133,40 @@ pub struct SkippedAnalysis {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EmptyAnalysis {
-    depth: i32,
-    score: PlyScore,
+    depth: u8,
+    score: Score,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FullAnalysis {
-    pv: String, // TODO: better type here?
-    depth: i32,
-    score: PlyScore,
-    time: i32,
-    nodes: i32,
-    nps: i32,
+pub struct BestMove {
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
+    pv: Vec<Uci>,
+    depth: u8,
+    score: Score,
+    time: u64,
+    nodes: u64,
+    nps: Option<u32>,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MatrixAnalysis {
+    #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
+    pv: Vec<Vec<Option<Vec<Uci>>>>,
+    score: Vec<Vec<Option<Score>>>,
+    depth: u8,
+    nodes: u64,
+    time: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nps: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum PlyAnalysis {
-    Full(FullAnalysis),
+    Matrix(MatrixAnalysis),
+    Best(BestMove),
     Skipped(SkippedAnalysis),
     Empty(EmptyAnalysis),
 }
