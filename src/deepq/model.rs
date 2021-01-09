@@ -20,6 +20,9 @@ use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, SpaceSeparator, StringWithSeparator};
 use shakmaty::uci::Uci;
+use mongodb::Collection;
+
+use crate::db::DbConn;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct UserId(pub String);
@@ -78,6 +81,12 @@ pub struct Report {
     pub origin: ReportOrigin,
     pub report_type: ReportType,
     pub games: Vec<GameId>,
+}
+
+impl Report {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_reports")
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -151,6 +160,12 @@ pub struct Game {
     pub white: Option<UserId>,
 }
 
+impl Game {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_games")
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameAnalysis {
     pub _id: ObjectId,
@@ -159,4 +174,10 @@ pub struct GameAnalysis {
     pub requested_pvs: u8,
     pub requested_depth: Option<u8>,
     pub requested_nodes: Option<u64>,
+}
+
+impl GameAnalysis {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_analysis")
+    }
 }
