@@ -40,7 +40,7 @@ use crate::db::DbConn;
 use crate::deepq::api::{
     insert_many_games, insert_one_report, precedence_for_origin, CreateGame, CreateReport,
 };
-use crate::deepq::model::{Eval, GameId, ReportOrigin, ReportType, UserId};
+use crate::deepq::model::{Score, GameId, ReportOrigin, ReportType, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{insert_many_jobs, CreateJob};
 use crate::fishnet::model::AnalysisType;
@@ -63,7 +63,7 @@ pub struct Game {
 
     #[serde_as(as = "StringWithSeparator::<SpaceSeparator, San>")]
     pub pgn: Vec<San>,
-    pub analysis: Option<Vec<Eval>>,
+    pub analysis: Option<Vec<Score>>,
 }
 
 fn uci_from_san(pgn: &Vec<San>) -> Result<Vec<Uci>> {

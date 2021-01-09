@@ -18,7 +18,7 @@
 use derive_more::{Display, From};
 use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
+use serde_with::{serde_as, DisplayFromStr, SpaceSeparator, StringWithSeparator};
 use shakmaty::uci::Uci;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -87,9 +87,56 @@ pub struct Blurs {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Eval {
-    pub cp: Option<i32>,
-    pub mate: Option<i32>,
+pub enum Score {
+    #[serde(rename = "cp")]
+    Cp(i64),
+    #[serde(rename = "mate")]
+    Mate(i64),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SkippedAnalysis {
+    skipped: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EmptyAnalysis {
+    depth: u8,
+    score: Score,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BestMove {
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
+    pv: Vec<Uci>,
+    depth: u8,
+    score: Score,
+    time: u64,
+    nodes: u64,
+    nps: Option<u32>,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MatrixAnalysis {
+    #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
+    pub pv: Vec<Vec<Option<Vec<Uci>>>>,
+    pub score: Vec<Vec<Option<Score>>>,
+    pub depth: u8,
+    pub nodes: u64,
+    pub time: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nps: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum PlyAnalysis {
+    Matrix(MatrixAnalysis),
+    Best(BestMove),
+    Skipped(SkippedAnalysis),
+    Empty(EmptyAnalysis),
 }
 
 // TODO: this should come directly from the lila db, why store this more than once?
@@ -108,8 +155,8 @@ pub struct Game {
 pub struct GameAnalysis {
     pub _id: ObjectId,
     pub game_id: GameId,
-    pub analysis: Vec<Eval>, // TODO: we should be able to compress this.
+    pub analysis: Vec<Option<PlyAnalysis>>,
     pub requested_pvs: u8,
-    pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i32>,
+    pub requested_depth: Option<u8>,
+    pub requested_nodes: Option<u64>,
 }

@@ -34,6 +34,7 @@ use warp::{
 use super::{api, filters as f, model as m};
 use crate::db::DbConn;
 use crate::deepq::api::{find_game, starting_position};
+use crate::deepq::model::{PlyAnalysis};
 use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
 
 // TODO: make this complete for all of the variant types we should support.
@@ -116,59 +117,6 @@ pub enum StockfishFlavor {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StockfishType {
     flavor: StockfishFlavor,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Score {
-    #[serde(rename = "cp")]
-    Cp(i64),
-    #[serde(rename = "mate")]
-    Mate(i64),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SkippedAnalysis {
-    skipped: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EmptyAnalysis {
-    depth: u8,
-    score: Score,
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BestMove {
-    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
-    pv: Vec<Uci>,
-    depth: u8,
-    score: Score,
-    time: u64,
-    nodes: u64,
-    nps: Option<u32>,
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MatrixAnalysis {
-    #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
-    pv: Vec<Vec<Option<Vec<Uci>>>>,
-    score: Vec<Vec<Option<Score>>>,
-    depth: u8,
-    nodes: u64,
-    time: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    nps: Option<u32>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum PlyAnalysis {
-    Matrix(MatrixAnalysis),
-    Best(BestMove),
-    Skipped(SkippedAnalysis),
-    Empty(EmptyAnalysis),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

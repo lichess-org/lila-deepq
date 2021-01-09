@@ -50,6 +50,15 @@ impl From<CreateReport> for m::Report {
     }
 }
 
+pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
+    let reports_coll = db.database.collection("deepq_reports");
+    let report: m::Report = report.into();
+    Ok(reports_coll
+        .insert_one(to_document(&report)?, None)
+        .await?
+        .inserted_id)
+}
+
 pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
     match origin {
         m::ReportOrigin::Moderator => 1_000_000i32,
@@ -85,28 +94,6 @@ impl From<CreateGame> for m::Game {
             pgn: g.pgn,
             black: g.black,
             white: g.white,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CreateGameAnalysis {
-    pub game_id: m::GameId,
-    pub analysis: Vec<m::Eval>,
-    pub requested_pvs: u8,
-    pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i32>,
-}
-
-impl From<CreateGameAnalysis> for m::GameAnalysis {
-    fn from(g: CreateGameAnalysis) -> m::GameAnalysis {
-        m::GameAnalysis {
-            _id: ObjectId::new(),
-            game_id: g.game_id,
-            analysis: g.analysis,
-            requested_pvs: g.requested_pvs,
-            requested_depth: g.requested_depth,
-            requested_nodes: g.requested_nodes,
         }
     }
 }
@@ -147,7 +134,31 @@ pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>
         .transpose()?)
 }
 
-pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
+#[derive(Debug, Clone)]
+pub struct CreateGameAnalysis {
+    pub game_id: m::GameId,
+    pub analysis: Vec<Option<m::PlyAnalysis>>,
+    pub requested_pvs: u8,
+    pub requested_depth: Option<u8>,
+    pub requested_nodes: Option<u64>,
+}
+
+impl From<CreateGameAnalysis> for m::GameAnalysis {
+    fn from(g: CreateGameAnalysis) -> m::GameAnalysis {
+        m::GameAnalysis {
+            _id: ObjectId::new(),
+            game_id: g.game_id,
+            analysis: g.analysis,
+            requested_pvs: g.requested_pvs,
+            requested_depth: g.requested_depth,
+            requested_nodes: g.requested_nodes,
+        }
+    }
+}
+
+pub async fn upsert_one_game_analysis(
+    db: DbConn, report: CreateReport
+) -> Result<Bson> {
     let reports_coll = db.database.collection("deepq_reports");
     let report: m::Report = report.into();
     Ok(reports_coll
