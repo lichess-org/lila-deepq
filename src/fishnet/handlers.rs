@@ -17,6 +17,7 @@
 
 use std::num::NonZeroU8;
 use std::result::Result as StdResult;
+use std::convert::{TryFrom, TryInto, Into};
 
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -36,8 +37,9 @@ use crate::db::DbConn;
 use crate::deepq::api::{
     find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
 };
-use crate::deepq::model::{PlyAnalysis, UserId};
+use crate::deepq::model::{PlyAnalysis, UserId, Nodes as ModelNodes};
 use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
+use crate::error::{Error, Result};
 
 // TODO: make this complete for all of the variant types we should support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -82,6 +84,18 @@ pub struct Nodes {
     nnue: u64,
     classical: u64,
 }
+
+impl TryFrom<Nodes> for ModelNodes {
+    type Error = Error;
+
+    fn try_from(nodes: Nodes) -> Result<ModelNodes> {
+        Ok(ModelNodes{
+            nnue: nodes.nnue.try_into()?,
+            classical: nodes.classical.try_into()?
+        })
+    }
+}
+
 
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug)]
@@ -213,7 +227,7 @@ async fn acquire_job(
                         work: WorkInfo {
                             id: job._id.to_string(),
                             _type: WorkType::Analysis,
-                            nodes: nodes_for_job(&job),
+                            nodes: nodes_for_job(&job).try_into()?,
                             multipv: multipv_for_job(&job),
                             depth: depth_for_job(&job),
                         },
@@ -254,12 +268,12 @@ async fn save_job_analysis(
 
     let analysis = UpdateGameAnalysis {
         job_id: job_id.into(),
-        game_id: job.game_id.into(),
+        game_id: job.clone().game_id.into(),
         analysis: report.analysis,
         source_id: UserId(api_user._id.to_string()),
-        requested_pvs: 0,      // TODO:
-        requested_depth: None, // TODO:
-        requested_nodes: None, // TODO:
+        requested_pvs: multipv_for_job(&job).map(Into::into),
+        requested_depth: depth_for_job(&job).map(Into::into),
+        requested_nodes: nodes_for_job(&job).try_into()?,
     };
     debug!("save_job_analysis > created UpdateGameAnalysis");
     upsert_one_game_analysis(db.clone(), analysis).await?;

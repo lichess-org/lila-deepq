@@ -167,15 +167,21 @@ impl Game {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Nodes {
+    pub nnue: i64,
+    pub classical: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameAnalysis {
     pub _id: ObjectId,
     pub job_id: ObjectId,
     pub game_id: GameId,
     pub source_id: UserId,
     pub analysis: Vec<Option<PlyAnalysis>>,
-    pub requested_pvs: i32,
+    pub requested_pvs: Option<i32>,
     pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i64>,
+    pub requested_nodes: Nodes,
 }
 
 impl GameAnalysis {

@@ -140,9 +140,9 @@ pub struct UpdateGameAnalysis {
     pub game_id: m::GameId,
     pub source_id: m::UserId,
     pub analysis: Vec<Option<m::PlyAnalysis>>,
-    pub requested_pvs: i32,
+    pub requested_pvs: Option<i32>,
     pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i64>,
+    pub requested_nodes: m::Nodes,
 }
 
 impl From<UpdateGameAnalysis> for m::GameAnalysis {
