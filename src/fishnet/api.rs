@@ -117,6 +117,14 @@ pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
     Ok(())
 }
 
+pub async fn get_user_job(db: DbConn, id: ObjectId, user: m::ApiUser) -> Result<Option<m::Job>> {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id, "owner": user.key}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
+}
+
 #[derive(Serialize)]
 pub struct QStatus {
     acquired: u64,

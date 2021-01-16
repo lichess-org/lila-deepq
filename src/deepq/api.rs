@@ -135,20 +135,23 @@ pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>
 }
 
 #[derive(Debug, Clone)]
-pub struct CreateGameAnalysis {
+pub struct UpdateGameAnalysis {
     pub job_id: ObjectId,
     pub game_id: m::GameId,
+    pub source_id: m::UserId,
     pub analysis: Vec<Option<m::PlyAnalysis>>,
-    pub requested_pvs: u8,
-    pub requested_depth: Option<u8>,
-    pub requested_nodes: Option<u64>,
+    pub requested_pvs: i32,
+    pub requested_depth: Option<i32>,
+    pub requested_nodes: Option<i64>,
 }
 
-impl From<CreateGameAnalysis> for m::GameAnalysis {
-    fn from(g: CreateGameAnalysis) -> m::GameAnalysis {
+impl From<UpdateGameAnalysis> for m::GameAnalysis {
+    fn from(g: UpdateGameAnalysis) -> m::GameAnalysis {
         m::GameAnalysis {
-            _id: g.job_id,
+            _id: ObjectId::new(),
+            job_id: g.job_id,
             game_id: g.game_id,
+            source_id: g.source_id,
             analysis: g.analysis,
             requested_pvs: g.requested_pvs,
             requested_depth: g.requested_depth,
@@ -158,7 +161,7 @@ impl From<CreateGameAnalysis> for m::GameAnalysis {
 }
 
 pub async fn upsert_one_game_analysis(
-    db: DbConn, analysis: CreateGameAnalysis
+    db: DbConn, analysis: UpdateGameAnalysis
 ) -> Result<ObjectId> {
     let analysis_coll = m::GameAnalysis::coll(db.clone());
     let analysis: m::GameAnalysis = analysis.into();

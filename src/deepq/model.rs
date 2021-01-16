@@ -110,7 +110,7 @@ pub struct SkippedAnalysis {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EmptyAnalysis {
-    depth: u8,
+    depth: i32,
     score: Score,
 }
 
@@ -119,11 +119,11 @@ pub struct EmptyAnalysis {
 pub struct BestMove {
     #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
     pv: Vec<Uci>,
-    depth: u8,
+    depth: i32,
     score: Score,
-    time: u64,
-    nodes: u64,
-    nps: Option<u32>,
+    time: i64,
+    nodes: i64,
+    nps: Option<i64>,
 }
 
 #[serde_as]
@@ -132,11 +132,11 @@ pub struct MatrixAnalysis {
     #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
     pub pv: Vec<Vec<Option<Vec<Uci>>>>,
     pub score: Vec<Vec<Option<Score>>>,
-    pub depth: u8,
-    pub nodes: u64,
-    pub time: u64,
+    pub depth: i32,
+    pub nodes: i64,
+    pub time: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nps: Option<u32>,
+    pub nps: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -169,11 +169,13 @@ impl Game {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameAnalysis {
     pub _id: ObjectId,
+    pub job_id: ObjectId,
     pub game_id: GameId,
+    pub source_id: UserId,
     pub analysis: Vec<Option<PlyAnalysis>>,
-    pub requested_pvs: u8,
-    pub requested_depth: Option<u8>,
-    pub requested_nodes: Option<u64>,
+    pub requested_pvs: i32,
+    pub requested_depth: Option<i32>,
+    pub requested_nodes: Option<i64>,
 }
 
 impl GameAnalysis {

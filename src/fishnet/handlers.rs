@@ -34,9 +34,9 @@ use warp::{
 use super::{api, filters as f, model as m};
 use crate::db::DbConn;
 use crate::deepq::api::{
-    find_game, starting_position, upsert_one_game_analysis, CreateGameAnalysis,
+    find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
 };
-use crate::deepq::model::PlyAnalysis;
+use crate::deepq::model::{PlyAnalysis, UserId};
 use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
 
 // TODO: make this complete for all of the variant types we should support.
@@ -239,25 +239,31 @@ async fn abort_job(
 }
 
 async fn save_job_analysis(
-    _db: DbConn,
-    _api_user: f::Authorized<m::ApiUser>,
+    db: DbConn,
+    api_user: f::Authorized<m::ApiUser>,
     job_id: Id,
     report: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
-    let _api_user = _api_user.val();
-    debug!("Converting into CreateGameAnalysis");
+    let api_user = api_user.val();
+    info!("save_job_analysis > User: {:?} / JobId: {:?}", api_user.name, job_id);
 
-    let analysis = CreateGameAnalysis {
+    let job = api::get_user_job(db.clone(), job_id.clone().into(), api_user.clone())
+        .await?
+        .ok_or(reject::not_found())?;
+    debug!("save_job_analysis > get_user_job > success");
+
+    let analysis = UpdateGameAnalysis {
         job_id: job_id.into(),
-        game_id: report.game_id.into(),
+        game_id: job.game_id.into(),
         analysis: report.analysis,
+        source_id: UserId(api_user._id.to_string()),
         requested_pvs: 0,      // TODO:
         requested_depth: None, // TODO:
         requested_nodes: None, // TODO:
     };
-    debug!("Upserting");
-    upsert_one_game_analysis(db.clone(), analysis)?;
-    debug!("Done");
+    debug!("save_job_analysis > created UpdateGameAnalysis");
+    upsert_one_game_analysis(db.clone(), analysis).await?;
+    debug!("save_job_analysis > upsert_one_game_analysis > success");
     Ok(None)
 }
 

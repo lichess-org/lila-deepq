@@ -57,6 +57,7 @@ impl From<AnalysisType> for Bson {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ApiUser {
+    pub _id: ObjectId,
     pub key: Key,
     pub user: Option<UserId>,
     pub name: String,
