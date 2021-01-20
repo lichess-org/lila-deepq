@@ -271,7 +271,7 @@ async fn save_job_analysis(
         game_id: job.clone().game_id.into(),
         analysis: report.analysis,
         source_id: UserId(api_user._id.to_string()),
-        requested_pvs: multipv_for_job(&job).map(|v| -> u8 { v.into() }).map(Into::into),
+        requested_pvs: multipv_for_job(&job).map(|v| i32::from(v.get())),
         requested_depth: depth_for_job(&job).map(Into::into),
         requested_nodes: nodes_for_job(&job).try_into()?,
     };
