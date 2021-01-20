@@ -26,42 +26,90 @@ pub mod lichess;
 extern crate clap;
 extern crate dotenv;
 extern crate futures;
+extern crate log;
 extern crate pretty_env_logger;
 extern crate serde_json;
 extern crate serde_with;
-extern crate log;
 
 use std::env;
 use std::result::Result as StdResult;
 
-use clap::{App, SubCommand};
+use clap::{App, Arg};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 use tokio::time::{delay_for, Duration};
 use warp::Filter;
 
+use crate::error::Error;
+
 #[tokio::main]
 async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+
     let matches = App::new(env!("CARGO_PKG_NAME"))
-                      .version(env!("CARGO_PKG_VERSION"))
-                      .author(env!("CARGO_PKG_AUTHORS"))
-                      .about(env!("CARGO_PKG_DESCRIPTION"))
-                      .subcommand(SubCommand::with_name("webserver"))
-                      .subcommand(SubCommand::with_name("irwin_job_listener"))
-                      .get_matches();
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
+        .subcommand(App::new("webserver"))
+        .subcommand(App::new("irwin-job-listener"))
+        .subcommand(
+            App::new("new-fishnet-key")
+                .arg(
+                    Arg::with_name("name")
+                        .short("n")
+                        .long("name")
+                        .help("Sets the name of the key")
+                        .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("user")
+                        .short("u")
+                        .long("user")
+                        .help("Sets the username for the key")
+                        .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("analysis-user")
+                        .long("analysis-user")
+                        .help("Allows this key to be used for user analysis"),
+                )
+                .arg(
+                    Arg::with_name("analysis-system")
+                        .long("analysis-system")
+                        .help("Allows this key to be used for system analysis"),
+                )
+                .arg(
+                    Arg::with_name("analysis-deep")
+                        .long("analysis-deep")
+                        .help("Allows this key to be used for deep analysis"),
+                )
+                .about("Creates a new fishnet key"),
+        )
+        .get_matches();
 
     if let Some(_matches) = matches.subcommand_matches("webserver") {
         return deepq_web().await;
     }
-    if let Some(_matches) = matches.subcommand_matches("irwin_job_listener") {
+    if let Some(_matches) = matches.subcommand_matches("irwin-job-listener") {
         return deepq_irwin_job_listener().await;
+    }
+    if let Some(_matches) = matches.subcommand_matches("new-fishnet-key") {
+        println!("WUAT");
+        let is_deep = _matches.is_present("analysis-deep");
+        let is_user = _matches.is_present("analysis-user");
+        let is_system = _matches.is_present("analysis-system");
+        debug!("deep: {}, user: {}, system: {}", is_deep, is_user, is_system);
+        if !is_deep && !is_user && !is_system {
+            error!("The key needs to include at least one analysis permissions level, such as --analysis-{{deep|user|system}}");
+            return Err(Box::new(Error::InvalidCommandLineArguments))
+        }
+        println!("Wuat");
     }
     Ok(())
 }
 
 async fn deepq_web() -> StdResult<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
     info!("Reading config...");
     dotenv().ok();
 
@@ -80,7 +128,6 @@ async fn deepq_web() -> StdResult<(), Box<dyn std::error::Error>> {
 }
 
 async fn deepq_irwin_job_listener() -> StdResult<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
     info!("Reading config...");
     dotenv().ok();
 

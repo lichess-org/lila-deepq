@@ -52,6 +52,8 @@ impl From<HttpError> for reject::Rejection {
 // TODO: this desperately needs to be cleaned up.
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Invalid command line arguments")]
+    InvalidCommandLineArguments,
     // #[error("Serde Deserialization Error")]
     // SerdeDeserializationError(#[from] _SerdeDeError),
     #[error("I am somehow unable to create a record in the database.")]
