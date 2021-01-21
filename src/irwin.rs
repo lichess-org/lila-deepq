@@ -24,23 +24,19 @@ use std::result::Result as StdResult;
 use std::str::FromStr;
 
 // use log::debug;
-use futures::{
-    future::{self, try_join_all},
-    stream::{Stream, StreamExt},
-};
+use futures::{future::try_join_all, stream::Stream};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
 use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
-use tokio::{
-    io::{stream_reader, AsyncBufReadExt},
-    time::Duration,
-};
+use tokio::{io::AsyncBufReadExt, time::Duration};
+use tokio_stream::{wrappers::LinesStream, StreamExt};
+use tokio_util::io::StreamReader;
 
 use crate::db::DbConn;
 use crate::deepq::api::{
     insert_many_games, insert_one_report, precedence_for_origin, CreateGame, CreateReport,
 };
-use crate::deepq::model::{Score, GameId, ReportOrigin, ReportType, UserId};
+use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{insert_many_jobs, CreateJob};
 use crate::fishnet::model::AnalysisType;
@@ -154,7 +150,11 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
         .iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<CreateGame>>>()?;
-    try_join_all(insert_many_games(db.clone(), games_with_uci.iter().cloned())).await?;
+    try_join_all(insert_many_games(
+        db.clone(),
+        games_with_uci.iter().cloned(),
+    ))
+    .await?;
     let fishnet_jobs: Vec<CreateJob> = request.clone().into();
     try_join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await?;
     insert_one_report(db.clone(), request.into()).await?;
@@ -171,12 +171,14 @@ pub async fn stream(url: &str, api_key: &str) -> Result<impl Stream<Item = Resul
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await?;
-    Ok(stream_reader(
-        response
-            .bytes_stream()
-            .map(|i| i.map_err(|e| IoError::new(ErrorKind::Other, e))),
-    )
-    .lines()
-    .filter(|line| future::ready(!line.as_ref().unwrap().is_empty()))
-    .map(|line| FromStr::from_str(&(line?))))
+
+    let stream = response
+        .bytes_stream()
+        .map(|i| i.map_err(|e| IoError::new(ErrorKind::Other, e)));
+    let stream = LinesStream::new(StreamReader::new(stream).lines());
+    let stream = Box::new(stream.map(|line| {
+        let line = line?;
+        Ok(FromStr::from_str(&line)?)
+    }));
+    Ok(stream)
 }

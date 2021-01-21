@@ -38,7 +38,7 @@ use clap::{App, Arg};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use log::{error, info, warn, debug};
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 use warp::Filter;
 
 use crate::error::Error;
@@ -160,6 +160,6 @@ async fn deepq_irwin_job_listener() -> StdResult<(), Box<dyn std::error::Error>>
         }
 
         warn!("Disconnected, sleeping for 5s...");
-        delay_for(Duration::from_millis(5000)).await;
+        sleep(Duration::from_millis(5000)).await;
     }
 }
