@@ -24,6 +24,7 @@ serde_json = "1.0.60"
 shakmaty = "0.17.0"
 strum = "0.20"
 strum_macros = "0.20"
+structopt = "0.3"
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["io-util"] }
