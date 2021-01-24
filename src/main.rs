@@ -45,7 +45,7 @@ use warp::Filter;
 enum Command {
     DeepQWebserver(DeepQWebserver),
     IrwinJobListener(IrwinJobListener),
-    FishnetNewKey(FishnetNewKey),
+    FishnetNewUser(FishnetNewUser),
 }
 
 #[derive(Debug, StructOpt)]
@@ -58,59 +58,8 @@ struct DeepQWebserver {
     port: u16,
 }
 
-
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Listens for irwin jobs from lila")]
-struct IrwinJobListener {
-    #[structopt(
-        short,
-        long,
-        env = "LILA_DEEPQ_IRWIN_STREAM_URL",
-        default_value = "https://lichess.org/api/stream/irwin"
-    )]
-    api_url: String,
-
-    #[structopt(short, long, env = "LILA_DEEPQ_IRWIN_LICHESS_API_KEY")]
-    lichess_api_key: String,
-}
-
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Create a new fishnet key.")]
-struct FishnetNewKey {
-    #[structopt(long)]
-    name: String,
-
-    #[structopt(long)]
-    user: String,
-
-    #[structopt(short, long)]
-    deep_analysis: bool,
-
-    #[structopt(short, long)]
-    user_analysis: bool,
-
-    #[structopt(short, long)]
-    system_analysis: bool,
-}
-
-#[tokio::main]
-async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
-
-    debug!("Reading ...");
-    dotenv().ok();
-
-    let command = Command::from_args();
-    match command {
-        Command::DeepQWebserver(args) => deepq_web(&args).await?,
-        Command::IrwinJobListener(args) => deepq_irwin_job_listener(&args).await?,
-        Command::FishnetNewKey(args) => fishnet_new_key(&args).await?
-    }
-
-    Ok(())
-}
-
 async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
+    // TODO: The db connection should be part of the struct opt.
     info!("Connecting to database...");
     let conn = db::connection().await?;
 
@@ -127,10 +76,25 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn deepq_irwin_job_listener(args: &IrwinJobListener) -> StdResult<(), Box<dyn std::error::Error>> {
-    info!("Reading config...");
-    dotenv().ok();
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Listens for irwin jobs from lila")]
+struct IrwinJobListener {
+    #[structopt(
+        short,
+        long,
+        env = "LILA_DEEPQ_IRWIN_STREAM_URL",
+        default_value = "https://lichess.org/api/stream/irwin"
+    )]
+    api_url: String,
 
+    #[structopt(short, long, env = "LILA_DEEPQ_IRWIN_LICHESS_API_KEY")]
+    lichess_api_key: String,
+}
+
+async fn deepq_irwin_job_listener(
+    args: &IrwinJobListener,
+) -> StdResult<(), Box<dyn std::error::Error>> {
+    // TODO: The db connection should be part of the struct opt.
     let conn = db::connection().await?;
 
     info!("Starting up...");
@@ -158,10 +122,67 @@ async fn deepq_irwin_job_listener(args: &IrwinJobListener) -> StdResult<(), Box<
         warn!("Disconnected, sleeping for 5s...");
         sleep(Duration::from_millis(5000)).await;
     }
-
 }
-async fn fishnet_new_key(_args: &FishnetNewKey) -> StdResult<(), Box<dyn std::error::Error>> {
-    debug!("New fishnet key!");
+
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Create a new fishnet key.")]
+struct FishnetNewUser {
+    #[structopt(long)]
+    keyname: String,
+
+    #[structopt(long)]
+    username: String,
+
+    #[structopt(short, long)]
+    deep_analysis: bool,
+
+    #[structopt(short, long)]
+    user_analysis: bool,
+
+    #[structopt(short, long)]
+    system_analysis: bool,
+}
+
+async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::error::Error>> {
+    let mut perms = Vec::new();
+    if args.system_analysis {
+        perms.push(fishnet::model::AnalysisType::SystemAnalysis);
+    }
+    if args.user_analysis {
+        perms.push(fishnet::model::AnalysisType::UserAnalysis);
+    }
+    if args.deep_analysis {
+        perms.push(fishnet::model::AnalysisType::Deep);
+    }
+    let create_user = fishnet::api::CreateApiUser {
+        user: Some(args.username.clone().into()),
+        name: args.keyname.clone(),
+        perms: perms,
+    };
+
+    // TODO: The db connection should be part of the struct opt.
+    let conn = db::connection().await?;
+    let api_user = fishnet::api::create_api_user(conn, create_user).await?;
+    info!(
+        "Created key {} for {{user: {:?}, name: {:?}}}",
+        api_user.key.0, api_user.user, api_user.name
+    );
     Ok(())
 }
 
+#[tokio::main]
+async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+
+    debug!("Reading ...");
+    dotenv().ok();
+
+    let command = Command::from_args();
+    match command {
+        Command::DeepQWebserver(args) => deepq_web(&args).await?,
+        Command::IrwinJobListener(args) => deepq_irwin_job_listener(&args).await?,
+        Command::FishnetNewUser(args) => fishnet_new_user(&args).await?,
+    }
+
+    Ok(())
+}
