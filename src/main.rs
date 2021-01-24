@@ -43,14 +43,14 @@ use warp::Filter;
 #[derive(Debug, StructOpt)]
 #[structopt(name = "lila-deepq", about = "Analysis Queues for lila.")]
 enum Command {
-    Webserver(Webserver),
+    DeepQWebserver(DeepQWebserver),
     IrwinJobListener(IrwinJobListener),
-    NewFishnetKey(NewFishnetKey),
+    FishnetNewKey(FishnetNewKey),
 }
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Runs the main lila-deepq webserver.")]
-struct Webserver {
+struct DeepQWebserver {
     #[structopt(short, long, env = "LILA_DEEPQ_WEBSERVER_HOST")]
     host: String,
 
@@ -76,7 +76,7 @@ struct IrwinJobListener {
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Create a new fishnet key.")]
-struct NewFishnetKey {
+struct FishnetNewKey {
     #[structopt(long)]
     name: String,
 
@@ -102,15 +102,15 @@ async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     let command = Command::from_args();
     match command {
-        Command::Webserver(args) => deepq_web(&args).await?,
+        Command::DeepQWebserver(args) => deepq_web(&args).await?,
         Command::IrwinJobListener(args) => deepq_irwin_job_listener(&args).await?,
-        Command::NewFishnetKey(args) => debug!("HERE"),
+        Command::FishnetNewKey(args) => fishnet_new_key(&args).await?
     }
 
     Ok(())
 }
 
-async fn deepq_web(args: &Webserver) -> StdResult<(), Box<dyn std::error::Error>> {
+async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
     info!("Connecting to database...");
     let conn = db::connection().await?;
 
@@ -158,4 +158,10 @@ async fn deepq_irwin_job_listener(args: &IrwinJobListener) -> StdResult<(), Box<
         warn!("Disconnected, sleeping for 5s...");
         sleep(Duration::from_millis(5000)).await;
     }
+
 }
+async fn fishnet_new_key(_args: &FishnetNewKey) -> StdResult<(), Box<dyn std::error::Error>> {
+    debug!("New fishnet key!");
+    Ok(())
+}
+
