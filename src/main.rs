@@ -50,11 +50,9 @@ enum Command {
 
 #[derive(Debug, StructOpt, Clone)]
 struct DatabaseOpts {
-    /// the URI for connecting to mongo
     #[structopt(long, env = "LILA_DEEPQ_MONGO_URI")]
     mongo_uri: String,
 
-    /// 
     #[structopt(long, env = "LILA_DEEPQ_MONGO_DATABASE")]
     mongo_database: String,
 }
