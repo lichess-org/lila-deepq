@@ -15,19 +15,27 @@ derive_more = "0.99.11"
 dotenv = "0.15.0"
 futures = "0.3.8"
 log = "0.4"
-mongodb = "1.1"
 pretty_env_logger = "0.3"
+rand = { version = "0.8", features = ["getrandom"] }
 redis-async = "0.8"
-reqwest = { version = "0.10", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
 serde = "1.0"
 serde_json = "1.0.60"
 shakmaty = "0.17.0"
+structopt = "0.3"
 strum = "0.20"
 strum_macros = "0.20"
 thiserror = "1.0"
-tokio = { version = "0.2", features = ["full"] }
-warp = "0.2"
+tokio-stream = { version = "0.1", features = ["io-util"] }
+tokio-util = { version = "0.6", features = ["io"] }
+tokio = { version = "1", features = ["full"] }
+warp = "0.3"
 
 [dependencies.serde_with]
 version = "1.6.0"
 features = [ "chrono", "json", "macros" ]
+
+[dependencies.mongodb]
+version = "1.1"
+default-features = false
+features = ["async-std-runtime"]

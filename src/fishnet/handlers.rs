@@ -17,6 +17,7 @@
 
 use std::num::NonZeroU8;
 use std::result::Result as StdResult;
+use std::convert::{TryFrom, TryInto, Into};
 
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -33,8 +34,12 @@ use warp::{
 
 use super::{api, filters as f, model as m};
 use crate::db::DbConn;
-use crate::deepq::api::{find_game, starting_position};
+use crate::deepq::api::{
+    find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
+};
+use crate::deepq::model::{PlyAnalysis, UserId, Nodes as ModelNodes};
 use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
+use crate::error::{Error, Result};
 
 // TODO: make this complete for all of the variant types we should support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,6 +85,18 @@ pub struct Nodes {
     classical: u64,
 }
 
+impl TryFrom<Nodes> for ModelNodes {
+    type Error = Error;
+
+    fn try_from(nodes: Nodes) -> Result<ModelNodes> {
+        Ok(ModelNodes{
+            nnue: nodes.nnue.try_into()?,
+            classical: nodes.classical.try_into()?
+        })
+    }
+}
+
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkInfo {
@@ -116,59 +133,6 @@ pub enum StockfishFlavor {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StockfishType {
     flavor: StockfishFlavor,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Score {
-    #[serde(rename = "cp")]
-    Cp(i64),
-    #[serde(rename = "mate")]
-    Mate(i64),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SkippedAnalysis {
-    skipped: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EmptyAnalysis {
-    depth: u8,
-    score: Score,
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BestMove {
-    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
-    pv: Vec<Uci>,
-    depth: u8,
-    score: Score,
-    time: u64,
-    nodes: u64,
-    nps: Option<u32>,
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MatrixAnalysis {
-    #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
-    pv: Vec<Vec<Option<Vec<Uci>>>>,
-    score: Vec<Vec<Option<Score>>>,
-    depth: u8,
-    nodes: u64,
-    time: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    nps: Option<u32>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum PlyAnalysis {
-    Matrix(MatrixAnalysis),
-    Best(BestMove),
-    Skipped(SkippedAnalysis),
-    Empty(EmptyAnalysis),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -263,7 +227,7 @@ async fn acquire_job(
                         work: WorkInfo {
                             id: job._id.to_string(),
                             _type: WorkType::Analysis,
-                            nodes: nodes_for_job(&job),
+                            nodes: nodes_for_job(&job).try_into()?,
                             multipv: multipv_for_job(&job),
                             depth: depth_for_job(&job),
                         },
@@ -289,14 +253,31 @@ async fn abort_job(
 }
 
 async fn save_job_analysis(
-    _db: DbConn,
-    _api_user: f::Authorized<m::ApiUser>,
-    _job_id: Id,
-    analysis: AnalysisReport,
+    db: DbConn,
+    api_user: f::Authorized<m::ApiUser>,
+    job_id: Id,
+    report: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
-    let _api_user = _api_user.val();
-    info!("save_job_analysis");
-    debug!("AnalysisReport: {:?}", analysis);
+    let api_user = api_user.val();
+    info!("save_job_analysis > User: {:?} / JobId: {:?}", api_user.name, job_id);
+
+    let job = api::get_user_job(db.clone(), job_id.clone().into(), api_user.clone())
+        .await?
+        .ok_or(reject::not_found())?;
+    debug!("save_job_analysis > get_user_job > success");
+
+    let analysis = UpdateGameAnalysis {
+        job_id: job_id.into(),
+        game_id: job.clone().game_id.into(),
+        analysis: report.analysis,
+        source_id: UserId(api_user._id.to_string()),
+        requested_pvs: multipv_for_job(&job).map(|v| i32::from(v.get())),
+        requested_depth: depth_for_job(&job).map(Into::into),
+        requested_nodes: nodes_for_job(&job).try_into()?,
+    };
+    debug!("save_job_analysis > created UpdateGameAnalysis");
+    upsert_one_game_analysis(db.clone(), analysis).await?;
+    debug!("save_job_analysis > upsert_one_game_analysis > success");
     Ok(None)
 }
 

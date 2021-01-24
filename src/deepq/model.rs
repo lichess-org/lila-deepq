@@ -18,8 +18,11 @@
 use derive_more::{Display, From};
 use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
+use serde_with::{serde_as, DisplayFromStr, SpaceSeparator, StringWithSeparator};
 use shakmaty::uci::Uci;
+use mongodb::Collection;
+
+use crate::db::DbConn;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct UserId(pub String);
@@ -80,6 +83,12 @@ pub struct Report {
     pub games: Vec<GameId>,
 }
 
+impl Report {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_reports")
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Blurs {
     pub nb: i32,
@@ -87,9 +96,56 @@ pub struct Blurs {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Eval {
-    pub cp: Option<i32>,
-    pub mate: Option<i32>,
+pub enum Score {
+    #[serde(rename = "cp")]
+    Cp(i64),
+    #[serde(rename = "mate")]
+    Mate(i64),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SkippedAnalysis {
+    skipped: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EmptyAnalysis {
+    depth: i32,
+    score: Score,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BestMove {
+    #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
+    pv: Vec<Uci>,
+    depth: i32,
+    score: Score,
+    time: i64,
+    nodes: i64,
+    nps: Option<i64>,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MatrixAnalysis {
+    #[serde_as(as = "Vec<Vec<Option<Vec<DisplayFromStr>>>>")]
+    pub pv: Vec<Vec<Option<Vec<Uci>>>>,
+    pub score: Vec<Vec<Option<Score>>>,
+    pub depth: i32,
+    pub nodes: i64,
+    pub time: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nps: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum PlyAnalysis {
+    Matrix(MatrixAnalysis),
+    Best(BestMove),
+    Skipped(SkippedAnalysis),
+    Empty(EmptyAnalysis),
 }
 
 // TODO: this should come directly from the lila db, why store this more than once?
@@ -104,12 +160,32 @@ pub struct Game {
     pub white: Option<UserId>,
 }
 
+impl Game {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_games")
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Nodes {
+    pub nnue: i64,
+    pub classical: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameAnalysis {
     pub _id: ObjectId,
+    pub job_id: ObjectId,
     pub game_id: GameId,
-    pub analysis: Vec<Eval>, // TODO: we should be able to compress this.
-    pub requested_pvs: u8,
+    pub source_id: UserId,
+    pub analysis: Vec<Option<PlyAnalysis>>,
+    pub requested_pvs: Option<i32>,
     pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i32>,
+    pub requested_nodes: Nodes,
+}
+
+impl GameAnalysis {
+    pub fn coll(db: DbConn) -> Collection {
+        db.database.collection("deepq_analysis")
+    }
 }

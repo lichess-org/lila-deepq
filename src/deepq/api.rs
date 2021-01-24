@@ -50,6 +50,15 @@ impl From<CreateReport> for m::Report {
     }
 }
 
+pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
+    let reports_coll = m::Report::coll(db.clone());
+    let report: m::Report = report.into();
+    Ok(reports_coll
+        .insert_one(to_document(&report)?, None)
+        .await?
+        .inserted_id)
+}
+
 pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
     match origin {
         m::ReportOrigin::Moderator => 1_000_000i32,
@@ -89,33 +98,11 @@ impl From<CreateGame> for m::Game {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CreateGameAnalysis {
-    pub game_id: m::GameId,
-    pub analysis: Vec<m::Eval>,
-    pub requested_pvs: u8,
-    pub requested_depth: Option<i32>,
-    pub requested_nodes: Option<i32>,
-}
-
-impl From<CreateGameAnalysis> for m::GameAnalysis {
-    fn from(g: CreateGameAnalysis) -> m::GameAnalysis {
-        m::GameAnalysis {
-            _id: ObjectId::new(),
-            game_id: g.game_id,
-            analysis: g.analysis,
-            requested_pvs: g.requested_pvs,
-            requested_depth: g.requested_depth,
-            requested_nodes: g.requested_nodes,
-        }
-    }
-}
-
 pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<m::GameId> {
     // NOTE: because games are unique on their game id, we have to do an upsert
     let game: m::Game = game.into();
     debug!("Insert One Game: {:?}", game);
-    let games_coll = db.database.collection("deepq_games");
+    let games_coll = m::Game::coll(db.clone());
     let result = games_coll
         .update_one(
             doc! { "_id": game._id.clone() },
@@ -147,11 +134,44 @@ pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>
         .transpose()?)
 }
 
-pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
-    let reports_coll = db.database.collection("deepq_reports");
-    let report: m::Report = report.into();
-    Ok(reports_coll
-        .insert_one(to_document(&report)?, None)
-        .await?
-        .inserted_id)
+#[derive(Debug, Clone)]
+pub struct UpdateGameAnalysis {
+    pub job_id: ObjectId,
+    pub game_id: m::GameId,
+    pub source_id: m::UserId,
+    pub analysis: Vec<Option<m::PlyAnalysis>>,
+    pub requested_pvs: Option<i32>,
+    pub requested_depth: Option<i32>,
+    pub requested_nodes: m::Nodes,
+}
+
+impl From<UpdateGameAnalysis> for m::GameAnalysis {
+    fn from(g: UpdateGameAnalysis) -> m::GameAnalysis {
+        m::GameAnalysis {
+            _id: ObjectId::new(),
+            job_id: g.job_id,
+            game_id: g.game_id,
+            source_id: g.source_id,
+            analysis: g.analysis,
+            requested_pvs: g.requested_pvs,
+            requested_depth: g.requested_depth,
+            requested_nodes: g.requested_nodes,
+        }
+    }
+}
+
+pub async fn upsert_one_game_analysis(
+    db: DbConn, analysis: UpdateGameAnalysis
+) -> Result<ObjectId> {
+    let analysis_coll = m::GameAnalysis::coll(db.clone());
+    let analysis: m::GameAnalysis = analysis.into();
+    let result = analysis_coll
+        .update_one(
+            doc! { "_id": analysis._id.clone() },
+            to_document(&analysis)?,
+            Some(UpdateOptions::builder().upsert(true).build()),
+        )
+        .await?;
+    debug!("Result: {:?}", result);
+    Ok(analysis._id)
 }

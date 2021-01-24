@@ -68,6 +68,7 @@ pub fn required_or_forbidden<'a, T>(o: Option<T>) ->  impl Future<Output=StdResu
     future::err(forbidden())
 }
 
+#[derive(Clone, Debug)]
 pub struct Id(ObjectId);
 
 impl FromStr for Id {

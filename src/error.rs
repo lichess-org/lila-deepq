@@ -43,15 +43,12 @@ pub enum HttpError {
 
 impl reject::Reject for HttpError {}
 
-impl From<HttpError> for reject::Rejection {
-    fn from(e: HttpError) -> Self {
-        reject::custom(e)
-    }
-}
-
 // TODO: this desperately needs to be cleaned up.
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Invalid command line arguments")]
+    InvalidCommandLineArguments,
+
     // #[error("Serde Deserialization Error")]
     // SerdeDeserializationError(#[from] _SerdeDeError),
     #[error("I am somehow unable to create a record in the database.")]
@@ -106,11 +103,5 @@ pub enum Error {
 }
 
 impl reject::Reject for Error {}
-
-impl From<Error> for reject::Rejection {
-    fn from(e: Error) -> Self {
-        reject::custom(e)
-    }
-}
 
 pub type Result<T> = std::result::Result<T, Error>;

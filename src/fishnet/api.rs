@@ -14,20 +14,71 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
-
+//
+//
 use chrono::prelude::*;
 use futures::future::Future;
+use std::convert::TryInto;
+use std::iter;
+
 use mongodb::bson::{
     doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
 };
 use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use serde::Serialize;
-use std::convert::TryInto;
 
 use crate::db::DbConn;
-use crate::deepq::model::GameId;
+use crate::deepq::model::{GameId, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
+
+#[derive(Debug, Clone)]
+pub struct CreateApiUser {
+    pub user: Option<UserId>,
+    pub name: String,
+    pub perms: Vec<m::AnalysisType>,
+}
+
+impl From<CreateApiUser> for m::ApiUser {
+    fn from(job: CreateApiUser) -> m::ApiUser {
+        let mut rng = thread_rng();
+        let key: String = iter::repeat(())
+            .map(|()| rng.sample(Alphanumeric))
+            .map(char::from)
+            .take(7)
+            .collect();
+        m::ApiUser {
+            _id: ObjectId::new(),
+            key: key.into(),
+            user: job.user,
+            name: job.name,
+            perms: job.perms,
+        }
+    }
+}
+
+pub async fn create_api_user(db: DbConn, create: CreateApiUser) -> Result<m::ApiUser> {
+    let col = m::ApiUser::coll(db);
+    let api_user: m::ApiUser = create.into();
+    col
+        .insert_one(to_document(&api_user)?, None)
+        .await?
+        .inserted_id
+        .as_object_id()
+        .ok_or(Error::CreateError)?;
+    Ok(api_user)
+}
+
+pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>> {
+    let col = m::ApiUser::coll(db);
+    Ok(col
+        .find_one(doc! {"key": key.0.clone()}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
+}
 
 #[derive(Debug, Clone)]
 pub struct CreateJob {
@@ -47,15 +98,6 @@ impl From<CreateJob> for m::Job {
             date_last_updated: BsonDateTime(Utc::now()),
         }
     }
-}
-
-pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>> {
-    let col = m::ApiUser::coll(db);
-    Ok(col
-        .find_one(doc! {"key": key.0.clone()}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
 }
 
 pub async fn insert_one_job(db: DbConn, job: CreateJob) -> Result<ObjectId> {
@@ -115,6 +157,14 @@ pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
         .delete_one(doc! { "_id": id }, None)
         .await?;
     Ok(())
+}
+
+pub async fn get_user_job(db: DbConn, id: ObjectId, user: m::ApiUser) -> Result<Option<m::Job>> {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id, "owner": user.key}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
 }
 
 #[derive(Serialize)]

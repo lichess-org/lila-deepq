@@ -2,8 +2,7 @@
 //
 // This file is part of lila-deepq.
 //
-// lila-deepq is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
+// lila-deepq is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
@@ -26,74 +25,107 @@ pub mod lichess;
 extern crate clap;
 extern crate dotenv;
 extern crate futures;
+extern crate log;
 extern crate pretty_env_logger;
 extern crate serde_json;
 extern crate serde_with;
-extern crate log;
 
-use std::env;
+use std::net::SocketAddr;
 use std::result::Result as StdResult;
 
-use clap::{App, SubCommand};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
-use log::{error, info, warn};
-use tokio::time::{delay_for, Duration};
+use log::{debug, error, info, warn};
+use structopt::StructOpt;
+use tokio::time::{sleep, Duration};
 use warp::Filter;
 
-#[tokio::main]
-async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
-    let matches = App::new(env!("CARGO_PKG_NAME"))
-                      .version(env!("CARGO_PKG_VERSION"))
-                      .author(env!("CARGO_PKG_AUTHORS"))
-                      .about(env!("CARGO_PKG_DESCRIPTION"))
-                      .subcommand(SubCommand::with_name("webserver"))
-                      .subcommand(SubCommand::with_name("irwin_job_listener"))
-                      .get_matches();
-
-    if let Some(_matches) = matches.subcommand_matches("webserver") {
-        return deepq_web().await;
-    }
-    if let Some(_matches) = matches.subcommand_matches("irwin_job_listener") {
-        return deepq_irwin_job_listener().await;
-    }
-    Ok(())
+#[derive(Debug, StructOpt)]
+#[structopt(name = "lila-deepq", about = "Analysis Queues for lila.")]
+enum Command {
+    DeepQWebserver(DeepQWebserver),
+    IrwinJobListener(IrwinJobListener),
+    FishnetNewUser(FishnetNewUser),
 }
 
-async fn deepq_web() -> StdResult<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
-    info!("Reading config...");
-    dotenv().ok();
+#[derive(Debug, StructOpt, Clone)]
+struct DatabaseOpts {
+    /// the URI for connecting to mongo
+    #[structopt(long, env = "LILA_DEEPQ_MONGO_URI")]
+    mongo_uri: String,
 
+    /// 
+    #[structopt(long, env = "LILA_DEEPQ_MONGO_DATABASE")]
+    mongo_database: String,
+}
+
+impl From<DatabaseOpts> for db::ConnectionOpts {
+    fn from(db_opts: DatabaseOpts) -> db::ConnectionOpts {
+        db::ConnectionOpts {
+            mongo_uri: db_opts.mongo_uri,
+            mongo_database: db_opts.mongo_database,
+        }
+    }
+
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Runs the main lila-deepq webserver.")]
+struct DeepQWebserver {
+    #[structopt(short, long, env = "LILA_DEEPQ_WEBSERVER_HOST")]
+    host: String,
+
+    #[structopt(short, long, env = "LILA_DEEPQ_WEBSERVER_PORT")]
+    port: u16,
+
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
+}
+
+async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
     info!("Connecting to database...");
-    let conn = db::connection().await?;
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
 
     info!("Mounting urls...");
     let app = fishnet::handlers::mount(conn.clone());
 
     info!("Starting server...");
+    let address: SocketAddr =
+        format!("{host}:{port}", host = args.host, port = args.port).parse()?;
     warp::serve(warp::path("fishnet").and(app))
-        .run(([127, 0, 0, 1], 3030))
+        .run(address)
         .await;
 
     Ok(())
 }
 
-async fn deepq_irwin_job_listener() -> StdResult<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
-    info!("Reading config...");
-    dotenv().ok();
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Listens for irwin jobs from lila")]
+struct IrwinJobListener {
+    #[structopt(
+        short,
+        long,
+        env = "LILA_DEEPQ_IRWIN_STREAM_URL",
+        default_value = "https://lichess.org/api/stream/irwin"
+    )]
+    api_url: String,
 
-    let api_url = env::var("LILA_DEEPQ_IRWIN_STREAM_URL")
-        .unwrap_or_else(|_| "https://lichess.org/api/stream/irwin".to_string());
-    let api_key = env::var("LILA_DEEPQ_IRWIN_LICHESS_API_KEY")?;
+    #[structopt(short, long, env = "LILA_DEEPQ_IRWIN_LICHESS_API_KEY")]
+    lichess_api_key: String,
 
-    let conn = db::connection().await?;
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
+}
+
+async fn deepq_irwin_job_listener(
+    args: &IrwinJobListener,
+) -> StdResult<(), Box<dyn std::error::Error>> {
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
 
     info!("Starting up...");
     loop {
         info!("Connecting...");
-        let mut stream = irwin::stream(&api_url, &api_key).await?;
+        let mut stream = irwin::stream(&args.api_url, &args.lichess_api_key).await?;
 
         info!("Reading stream...");
         while let Some(msg) = stream.next().await {
@@ -113,6 +145,71 @@ async fn deepq_irwin_job_listener() -> StdResult<(), Box<dyn std::error::Error>>
         }
 
         warn!("Disconnected, sleeping for 5s...");
-        delay_for(Duration::from_millis(5000)).await;
+        sleep(Duration::from_millis(5000)).await;
     }
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(about = "Create a new fishnet key.")]
+struct FishnetNewUser {
+    #[structopt(long)]
+    keyname: String,
+
+    #[structopt(long)]
+    username: String,
+
+    #[structopt(short, long)]
+    deep_analysis: bool,
+
+    #[structopt(short, long)]
+    user_analysis: bool,
+
+    #[structopt(short, long)]
+    system_analysis: bool,
+
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
+}
+
+async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::error::Error>> {
+    let mut perms = Vec::new();
+    if args.system_analysis {
+        perms.push(fishnet::model::AnalysisType::SystemAnalysis);
+    }
+    if args.user_analysis {
+        perms.push(fishnet::model::AnalysisType::UserAnalysis);
+    }
+    if args.deep_analysis {
+        perms.push(fishnet::model::AnalysisType::Deep);
+    }
+    let create_user = fishnet::api::CreateApiUser {
+        user: Some(args.username.clone().into()),
+        name: args.keyname.clone(),
+        perms: perms,
+    };
+
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
+    let api_user = fishnet::api::create_api_user(conn, create_user).await?;
+    info!(
+        "Created key {} for {{user: {:?}, name: {:?}}}",
+        api_user.key.0, api_user.user, api_user.name
+    );
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+
+    debug!("Reading ...");
+    dotenv().ok();
+
+    let command = Command::from_args();
+    match command {
+        Command::DeepQWebserver(args) => deepq_web(&args).await?,
+        Command::IrwinJobListener(args) => deepq_irwin_job_listener(&args).await?,
+        Command::FishnetNewUser(args) => fishnet_new_user(&args).await?,
+    }
+
+    Ok(())
 }
