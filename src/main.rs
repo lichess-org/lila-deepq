@@ -48,6 +48,27 @@ enum Command {
     FishnetNewUser(FishnetNewUser),
 }
 
+#[derive(Debug, StructOpt, Clone)]
+struct DatabaseOpts {
+    /// the URI for connecting to mongo
+    #[structopt(long, env = "LILA_DEEPQ_MONGO_URI")]
+    mongo_uri: String,
+
+    /// 
+    #[structopt(long, env = "LILA_DEEPQ_MONGO_DATABASE")]
+    mongo_database: String,
+}
+
+impl From<DatabaseOpts> for db::ConnectionOpts {
+    fn from(db_opts: DatabaseOpts) -> db::ConnectionOpts {
+        db::ConnectionOpts {
+            mongo_uri: db_opts.mongo_uri,
+            mongo_database: db_opts.mongo_database,
+        }
+    }
+
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Runs the main lila-deepq webserver.")]
 struct DeepQWebserver {
@@ -56,12 +77,14 @@ struct DeepQWebserver {
 
     #[structopt(short, long, env = "LILA_DEEPQ_WEBSERVER_PORT")]
     port: u16,
+
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
 }
 
 async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
-    // TODO: The db connection should be part of the struct opt.
     info!("Connecting to database...");
-    let conn = db::connection().await?;
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
 
     info!("Mounting urls...");
     let app = fishnet::handlers::mount(conn.clone());
@@ -89,13 +112,15 @@ struct IrwinJobListener {
 
     #[structopt(short, long, env = "LILA_DEEPQ_IRWIN_LICHESS_API_KEY")]
     lichess_api_key: String,
+
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
 }
 
 async fn deepq_irwin_job_listener(
     args: &IrwinJobListener,
 ) -> StdResult<(), Box<dyn std::error::Error>> {
-    // TODO: The db connection should be part of the struct opt.
-    let conn = db::connection().await?;
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
 
     info!("Starting up...");
     loop {
@@ -141,6 +166,9 @@ struct FishnetNewUser {
 
     #[structopt(short, long)]
     system_analysis: bool,
+
+    #[structopt(flatten)]
+    database_opts: DatabaseOpts,
 }
 
 async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::error::Error>> {
@@ -160,8 +188,7 @@ async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::e
         perms: perms,
     };
 
-    // TODO: The db connection should be part of the struct opt.
-    let conn = db::connection().await?;
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
     let api_user = fishnet::api::create_api_user(conn, create_user).await?;
     info!(
         "Created key {} for {{user: {:?}, name: {:?}}}",
