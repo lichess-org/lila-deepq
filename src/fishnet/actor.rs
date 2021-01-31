@@ -15,37 +15,3 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::deepq::model::GameId;
-use crate::db::DbConn;
-use crate::fishnet::handlers;
-
-use tokio::sync::broadcast;
-use warp::{
-    filters::BoxedFilter,
-    reply::Reply,
-};
-
-#[derive(Debug, Clone)]
-pub enum FishnetMsg {
-    JobAcquired(GameId),
-    JobAborted(GameId),
-    JobCompleted(GameId),
-}
-
-
-pub struct Fishnet {
-    pub tx: broadcast::Sender<FishnetMsg>,
-}
-
-impl Fishnet {
-    pub fn new() -> Fishnet {
-        // TODO: make the amount of backlog configurable
-        let (tx, _) = broadcast::channel(16);
-        Fishnet {tx}
-    }
-
-    pub fn handlers(&self, db: DbConn) -> BoxedFilter<(impl Reply,)> { 
-        handlers::mount(db.clone(), self.tx.clone())
-    }
-}
-

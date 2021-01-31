@@ -54,6 +54,9 @@ pub enum Error {
     #[error("I am somehow unable to create a record in the database.")]
     CreateError,
 
+    #[error("I am somehow unable to find a record in the database.")]
+    NotFoundError,
+
     #[error("BSON Error")]
     BsonSerializationError(#[from] _BsonSeError),
 

@@ -36,7 +36,7 @@ use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{insert_many_jobs, CreateJob};
 use crate::fishnet::model::AnalysisType;
-use crate::fishnet::actor::FishnetMsg;
+use crate::fishnet::FishnetMsg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {

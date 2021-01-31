@@ -15,8 +15,41 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
-pub mod actor;
 pub mod api;
 pub mod filters;
 pub mod handlers;
 pub mod model;
+
+use crate::deepq::model::GameId;
+use crate::db::DbConn;
+
+use tokio::sync::broadcast;
+use warp::{
+    filters::BoxedFilter,
+    reply::Reply,
+};
+
+#[derive(Debug, Clone)]
+pub enum FishnetMsg {
+    JobAcquired(GameId),
+    JobAborted(GameId),
+    JobCompleted(GameId),
+}
+
+
+pub struct Actor {
+    pub tx: broadcast::Sender<FishnetMsg>,
+}
+
+impl Actor {
+    pub fn new(channel_size: usize) -> Actor {
+        // TODO: make the amount of backlog configurable
+        let (tx, _) = broadcast::channel(channel_size);
+        Actor {tx}
+    }
+
+    pub fn handlers(&self, db: DbConn) -> BoxedFilter<(impl Reply,)> { 
+        handlers::mount(db.clone(), self.tx.clone())
+    }
+}
+

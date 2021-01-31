@@ -64,7 +64,6 @@ impl From<DatabaseOpts> for db::ConnectionOpts {
             mongo_database: db_opts.mongo_database,
         }
     }
-
 }
 
 #[derive(Debug, StructOpt)]
@@ -83,10 +82,14 @@ struct DeepQWebserver {
 async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
     info!("Connecting to database...");
     let conn = db::connection(&args.database_opts.clone().into()).await?;
-    info!("Mounting urls...");
 
-    let fishnet = fishnet::actor::Fishnet::new();
+    // TODO: should probably make the 16 configurable.
+    info!("Starting Fishnet Actor...");
+    let fishnet = fishnet::Actor::new(16);
+    info!("Mounting urls...");
     let app = fishnet.handlers(conn.clone());
+
+    info!("Starting Irwin Actor...");
     irwin::api::fishnet_listener(conn.clone(), fishnet.tx.clone())?;
 
     info!("Starting server...");

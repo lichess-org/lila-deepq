@@ -30,7 +30,8 @@ use rand::{thread_rng, Rng};
 use serde::Serialize;
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId};
+use crate::deepq::model::{GameId, UserId, GameAnalysis};
+use crate::deepq::api::{find_analysis_for_job};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
 
@@ -159,6 +160,23 @@ pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameI
         .map(from_document)
         .transpose()?
         .map(|d: m::Job| d.game_id))
+}
+
+
+pub async fn is_job_completed(db: DbConn, id: ObjectId) -> Result<Option<bool>>  {
+    let job: m::Job = m::Job::coll(db.clone())
+        .find_one(doc! {"_id": id}, None)
+        .await?
+        .map(from_document)
+        .transpose()?
+        .ok_or(Error::NotFoundError)?;
+
+    Ok(
+        find_analysis_for_job(db, job._id.clone()).await?
+        .map(|a: GameAnalysis| {
+            a.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
+        })
+    )
 }
 
 pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {

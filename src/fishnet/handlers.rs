@@ -33,7 +33,7 @@ use warp::{
     Filter, Rejection,
 };
 
-use super::{api, filters as f, model as m, actor::FishnetMsg};
+use super::{api, filters as f, model as m, FishnetMsg};
 use crate::db::DbConn;
 use crate::deepq::api::{
     find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
@@ -300,10 +300,11 @@ async fn save_job_analysis(
     };
     debug!("save_job_analysis > created UpdateGameAnalysis");
     upsert_one_game_analysis(db.clone(), analysis).await?;
-    // TODO: determine if the analysis is complete
-    //       currently fishnet only sends full matrix stuff when it is complete.
-    send(tx, FishnetMsg::JobCompleted(job.clone().game_id.into()));
     debug!("save_job_analysis > upsert_one_game_analysis > success");
+    api::is_job_completed(db.clone(), job.clone()._id).await?.filter(|b| *b).map(|_| {
+        debug!("save_job_analysis > JobCompleted");
+        send(tx, FishnetMsg::JobCompleted(job.clone().game_id.into()));
+    });
     Ok(None)
 }
 

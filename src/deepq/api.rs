@@ -175,3 +175,12 @@ pub async fn upsert_one_game_analysis(
     debug!("Result: {:?}", result);
     Ok(analysis._id)
 }
+
+pub async fn find_analysis_for_job(db: DbConn, job_id: ObjectId) -> Result<Option<m::GameAnalysis>> {
+    let analysis_coll = m::GameAnalysis::coll(db.clone());
+    Ok(analysis_coll
+        .find_one(doc! {"job_id": job_id}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
+}
