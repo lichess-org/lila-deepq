@@ -126,7 +126,7 @@ where
 }
 
 pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {
-    let games_coll = db.database.collection("deepq_games");
+    let games_coll = m::Game::coll(db.clone());
     Ok(games_coll
         .find_one(doc! {"_id": game_id}, None)
         .await?
