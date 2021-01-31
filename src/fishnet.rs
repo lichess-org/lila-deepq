@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
+pub mod actor;
 pub mod api;
 pub mod filters;
 pub mod handlers;

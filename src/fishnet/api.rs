@@ -152,6 +152,15 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: ObjectId) -> Res
     Ok(())
 }
 
+pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameId>>  {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id}, None)
+        .await?
+        .map(from_document)
+        .transpose()?
+        .map(|d: m::Job| d.game_id))
+}
+
 pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
     m::Job::coll(db)
         .delete_one(doc! { "_id": id }, None)

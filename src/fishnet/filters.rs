@@ -25,7 +25,7 @@ use warp::{Filter, Rejection};
 use super::{api, model as m};
 use crate::db::DbConn;
 use crate::error::{Error, HttpError};
-use crate::http::{forbidden, with_db};
+use crate::http::{forbidden, with};
 
 #[derive(Debug)]
 pub struct HeaderKey(pub m::Key);
@@ -144,7 +144,7 @@ where
     T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned,
 {
     warp::any()
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
         .and(warp::body::json::<T>())
         .and_then(authorize::<T>)
 }

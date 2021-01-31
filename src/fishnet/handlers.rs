@@ -1,4 +1,4 @@
-// Copyright 2020 Lakin Wecker
+// Copyright 2020-2021 Lakin Wecker
 //
 // This file is part of lila-deepq.
 //
@@ -19,12 +19,13 @@ use std::num::NonZeroU8;
 use std::result::Result as StdResult;
 use std::convert::{TryFrom, TryInto, Into};
 
-use log::{debug, info};
+use log::{debug, info, error};
 use serde::{Deserialize, Serialize};
 use serde_with::{
     serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator,
 };
 use shakmaty::{fen::Fen, uci::Uci};
+use tokio::sync::broadcast;
 use warp::{
     filters::{method, BoxedFilter},
     http, path, reject,
@@ -32,13 +33,13 @@ use warp::{
     Filter, Rejection,
 };
 
-use super::{api, filters as f, model as m};
+use super::{api, filters as f, model as m, actor::FishnetMsg};
 use crate::db::DbConn;
 use crate::deepq::api::{
     find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
 };
 use crate::deepq::model::{PlyAnalysis, UserId, Nodes as ModelNodes};
-use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with_db, Id};
+use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with, Id};
 use crate::error::{Error, Result};
 
 // TODO: make this complete for all of the variant types we should support.
@@ -190,8 +191,18 @@ fn skip_positions_for_job(job: &m::Job) -> Vec<u8> {
     }
 }
 
+fn send(
+    tx: broadcast::Sender<FishnetMsg>,
+    msg: FishnetMsg
+) {
+    if let Err(err) = tx.send(msg.clone()) {
+        error!("Unable to send msg: {:?} due to: {:?}", msg, err);
+    }
+}
+
 async fn acquire_job(
     db: DbConn,
+    tx: broadcast::Sender<FishnetMsg>,
     api_user: f::Authorized<m::ApiUser>,
 ) -> StdResult<Option<Job>, Rejection> {
     let api_user = api_user.val();
@@ -218,6 +229,10 @@ async fn acquire_job(
                     None // acquire_job(db.clone(), api_user.clone())?
                 }
                 Some(game) => {
+                    send(
+                        tx,
+                        FishnetMsg::JobAcquired(job.game_id.clone().into())
+                    );
                     let job = Job {
                         game_id: job.game_id.to_string(),
                         position: starting_position(game.clone()),
@@ -243,17 +258,25 @@ async fn acquire_job(
 
 async fn abort_job(
     db: DbConn,
+    tx: broadcast::Sender<FishnetMsg>,
     api_user: f::Authorized<m::ApiUser>,
     job_id: Id,
 ) -> StdResult<Option<()>, Rejection> {
     let api_user = api_user.val();
     info!("abort_job > {}", api_user.name);
-    api::unassign_job(db.clone(), api_user, job_id.into()).await?;
+    api::unassign_job(db.clone(), api_user, job_id.clone().into()).await?;
+    let game_id = api::game_id_for_job_id(db.clone(), job_id.clone().into()).await?;
+    if let Some(game_id) = game_id {
+        send(tx, FishnetMsg::JobAborted(game_id));
+    }
     Ok(None) // None because we're going to return no-content
 }
 
+/// TODO: Not sure I'm checking to ensure that the job is "done"
+/// TODO: Need to mark job as done if it is done and update report.
 async fn save_job_analysis(
     db: DbConn,
+    tx: broadcast::Sender<FishnetMsg>,
     api_user: f::Authorized<m::ApiUser>,
     job_id: Id,
     report: AnalysisReport,
@@ -277,6 +300,9 @@ async fn save_job_analysis(
     };
     debug!("save_job_analysis > created UpdateGameAnalysis");
     upsert_one_game_analysis(db.clone(), analysis).await?;
+    // TODO: determine if the analysis is complete
+    //       currently fishnet only sends full matrix stuff when it is complete.
+    send(tx, FishnetMsg::JobCompleted(job.clone().game_id.into()));
     debug!("save_job_analysis > upsert_one_game_analysis > success");
     Ok(None)
 }
@@ -323,12 +349,12 @@ fn _log_body() -> impl Filter<Extract = (), Error = Rejection> + Copy {
         .untuple_one()
 }
 
-pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
+pub fn mount(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> BoxedFilter<(impl Reply,)> {
     let authenticated = f::api_user_from_header(db.clone());
     let authentication_required = authenticated.clone().and_then(required_or_unauthenticated);
 
     let header_authorization_required = warp::any()
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
         .and(authentication_required.clone())
         .and_then(f::authorize);
 
@@ -342,14 +368,16 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     let acquire = path("acquire")
         .and(method::post())
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
+        .and(with(tx.clone()))
         .and(header_authorization_required.clone())
         .and_then(acquire_job)
         .and_then(json_object_or_no_content::<Job>);
 
     let abort = path("abort")
         .and(method::post())
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
+        .and(with(tx.clone()))
         .and(header_authorization_required.clone())
         .and(path::param())
         .and_then(abort_job)
@@ -357,7 +385,8 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     let analysis = path("analysis")
         .and(method::post())
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
+        .and(with(tx.clone()))
         .and(header_authorization_required.clone())
         .and(path::param())
         .and(warp::body::json())
@@ -366,13 +395,13 @@ pub fn mount(db: DbConn) -> BoxedFilter<(impl Reply,)> {
 
     let valid_key = path("key")
         .and(method::get())
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
         .and(path::param())
         .and_then(check_key_validity);
 
     let status = path("status")
         .and(method::get())
-        .and(with_db(db.clone()))
+        .and(with(db.clone()))
         .and(f::authentication_from_header(db))
         .and_then(fishnet_status)
         .map(|status| {

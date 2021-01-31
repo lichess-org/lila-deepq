@@ -29,7 +29,6 @@ use warp::{
     Filter, Rejection,
 };
 
-use crate::db::DbConn;
 use crate::error::{Error, HttpError};
 
 /// Unauthorized rejection
@@ -54,15 +53,17 @@ where
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
 }
 
-pub fn required_or_unauthenticated<'a, T>(o: Option<T>) -> impl Future<Output=StdResult<T, Rejection>> {
-    if let Some(t) = o {  
+pub fn required_or_unauthenticated<'a, T>(
+    o: Option<T>,
+) -> impl Future<Output = StdResult<T, Rejection>> {
+    if let Some(t) = o {
         return future::ok(t);
     }
     future::err(unauthenticated())
 }
 
-pub fn required_or_forbidden<'a, T>(o: Option<T>) ->  impl Future<Output=StdResult<T, Rejection>> {
-    if let Some(t) = o {  
+pub fn required_or_forbidden<'a, T>(o: Option<T>) -> impl Future<Output = StdResult<T, Rejection>> {
+    if let Some(t) = o {
         return future::ok(t);
     }
     future::err(forbidden())
@@ -85,10 +86,11 @@ impl From<Id> for ObjectId {
     }
 }
 
-pub fn with_db(
-    db: DbConn,
-) -> impl Filter<Extract = (DbConn,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || db.clone())
+pub fn with<T>(t: T) -> impl Filter<Extract = (T,), Error = std::convert::Infallible> + Clone
+where
+    T: Clone + Sync + Send,
+{
+    warp::any().map(move || t.clone())
 }
 
 pub async fn json_object_or_no_content<T: Serialize>(
