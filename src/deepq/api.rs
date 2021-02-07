@@ -19,7 +19,7 @@ use chrono::prelude::*;
 use futures::future::Future;
 use log::debug;
 use mongodb::{
-    bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
+    bson::{doc, from_document, oid::ObjectId, to_document, DateTime as BsonDateTime},
     options::UpdateOptions,
 };
 use shakmaty::{fen::Fen, uci::Uci};
@@ -50,13 +50,22 @@ impl From<CreateReport> for m::Report {
     }
 }
 
-pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
+pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<ObjectId> {
     let reports_coll = m::Report::coll(db.clone());
     let report: m::Report = report.into();
-    Ok(reports_coll
+    reports_coll
         .insert_one(to_document(&report)?, None)
+        .await?;
+    Ok(report._id)
+}
+
+pub async fn find_report(db: DbConn, id: ObjectId) -> Result<Option<m::Report>> {
+    let reports_coll = m::Report::coll(db.clone());
+    Ok(reports_coll
+        .find_one(doc! {"_id": id}, None)
         .await?
-        .inserted_id)
+        .map(from_document)
+        .transpose()?)
 }
 
 pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {

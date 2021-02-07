@@ -84,6 +84,7 @@ pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>>
 #[derive(Debug, Clone)]
 pub struct CreateJob {
     pub game_id: GameId,
+    pub report_id: Option<ObjectId>,
     pub analysis_type: m::AnalysisType,
     pub precedence: i32,
 }
@@ -93,6 +94,7 @@ impl From<CreateJob> for m::Job {
         m::Job {
             _id: ObjectId::new(),
             game_id: job.game_id,
+            report_id: job.report_id,
             analysis_type: job.analysis_type,
             precedence: job.precedence,
             owner: None,
@@ -189,6 +191,14 @@ pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
 pub async fn get_user_job(db: DbConn, id: ObjectId, user: m::ApiUser) -> Result<Option<m::Job>> {
     Ok(m::Job::coll(db)
         .find_one(doc! {"_id": id, "owner": user.key}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
+}
+
+pub async fn get_job(db: DbConn, id: ObjectId) -> Result<Option<m::Job>> {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id}, None)
         .await?
         .map(from_document)
         .transpose()?)

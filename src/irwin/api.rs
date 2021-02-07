@@ -1,5 +1,5 @@
-// Copyright 2021 Lakin Wecker
 //
+// Copyright 2021 Lakin Wecker
 // This file is part of lila-deepq.
 //
 // lila-deepq is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ use crate::deepq::api::{
 };
 use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
-use crate::fishnet::api::{insert_many_jobs, CreateJob};
+use crate::fishnet::api::{insert_many_jobs, CreateJob, get_job};
 use crate::fishnet::model::AnalysisType;
 use crate::fishnet::FishnetMsg;
 
@@ -113,6 +113,7 @@ impl From<Request> for Vec<CreateJob> {
             .iter()
             .map(|g| CreateJob {
                 game_id: g.id.clone(),
+                report_id: None,
                 analysis_type: AnalysisType::Deep,
                 precedence: precedence_for_origin(request.clone().origin),
             })
@@ -131,9 +132,20 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
         games_with_uci.iter().cloned(),
     ))
     .await?;
-    let fishnet_jobs: Vec<CreateJob> = request.clone().into();
+
+    let report_id = insert_one_report(db.clone(), request.clone().into()).await?;
+
+    let fishnet_jobs: Vec<CreateJob> = request.into();
+    let fishnet_jobs: Vec<CreateJob> = fishnet_jobs.iter().map(|j: &CreateJob| {
+        CreateJob{
+            game_id: j.game_id.clone(),
+            report_id: Some(report_id.clone()),
+            analysis_type: j.analysis_type.clone(),
+            precedence: j.precedence,
+        }
+    }).collect();
+
     try_join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await?;
-    insert_one_report(db.clone(), request.into()).await?;
     Ok(())
 }
 
@@ -144,16 +156,22 @@ pub fn fishnet_listener(_db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Resul
         while !should_stop {
             let msg = rx.recv().await;
             if let Ok(msg) = msg {
-                //irwin::api::
                 match msg {
                     FishnetMsg::JobAcquired(id) => {
+                        // TODO: do something with this?
                         debug!("irwin::api::fishnet_listener - Fishnet::JobAcquired({})", id);
                     },
                     FishnetMsg::JobAborted(id) => {
+                        // TODO: do something with this?
                         debug!("irwin::api::fishnet_listener - Fishnet::JobAborted({})", id);
                     },
                     FishnetMsg::JobCompleted(id) => {
                         debug!("irwin::api::fishnet_listener - Fishnet::JobCompleted({})", id);
+                        let job = get_job(db.clone(), id.clone()).await?;
+                        if let Some(report_id) = job.report_id {
+                            let report = api::find_report(db.clone(), report_id.clone()).await?;
+                            debug!("irwin::api::fishnet_listener - Fishnet::JobCompleted({})", id);
+                        }
                     }
                 }
             } else if let Err(e) = msg {

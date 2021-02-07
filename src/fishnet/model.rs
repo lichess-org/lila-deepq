@@ -78,6 +78,7 @@ pub struct Job {
     pub precedence: i32,
     pub owner: Option<String>, // TODO: this should be the key from the database
     pub date_last_updated: DateTime,
+    pub report_id: Option<ObjectId>,
 }
 
 impl Job {
