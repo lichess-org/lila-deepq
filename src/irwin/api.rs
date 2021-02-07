@@ -36,7 +36,7 @@ use crate::deepq::api::{
 use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
-use crate::fishnet::model::AnalysisType;
+use crate::fishnet::model::{AnalysisType, JobId};
 use crate::fishnet::FishnetMsg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -151,9 +151,63 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     Ok(())
 }
 
-pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()> {
+fn handle_job_acquired(_db: DbConn, job_id: JobId) {
     let p = "irwin::api::fishnet_listener >";
+    debug!("{} Fishnet::JobAcquired({})", p, job_id);
+}
+
+fn handle_job_aborted(_db: DbConn, job_id: JobId) {
+    let p = "irwin::api::fishnet_listener >";
+    debug!("{} Fishnet::JobAborted({})", p, job_id);
+}
+
+fn handle_job_completed(db: DbConn, job_id: JobId) {
     tokio::spawn(async move {
+        let p = "irwin::api::fishnet_listener >";
+        debug!("{} Fishnet::JobCompleted({})", p, job_id);
+        match get_job(db.clone(), job_id.clone().into()).await {
+            Result::Err(err) => {
+                error!(
+                    "{} Unable find job for {:?}. Error: {:?}",
+                    p,
+                    job_id.clone(),
+                    err
+                );
+            }
+            Result::Ok(None) => {
+                error!("{} Unable find job for {:?}.", p, job_id.clone());
+            }
+            Result::Ok(Some(job)) => {
+                if let Some(report_id) = job.report_id {
+                    match find_report(db.clone(), report_id.clone()).await {
+                        Result::Err(err) => {
+                            error!(
+                                "{} Unable find report for {:?}. Error: {:?}",
+                                p,
+                                report_id.clone(),
+                                err
+                            );
+                        }
+                        Result::Ok(None) => {
+                            error!(
+                                "{} Unable find report for {:?}.",
+                                p,
+                                report_id.clone()
+                            );
+                        }
+                        Result::Ok(Some(report)) => {
+                            debug!("{} Fishnet::JobCompleted({})", p, job_id);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()> {
+    tokio::spawn(async move {
+        let p = "irwin::api::fishnet_listener >";
         let mut should_stop: bool = false;
         let mut rx = tx.subscribe();
         while !should_stop {
@@ -161,50 +215,14 @@ pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result
             let msg = rx.recv().await;
             if let Ok(msg) = msg {
                 match msg {
-                    FishnetMsg::JobAcquired(id) => {
-                        // TODO: do something with this?
-                        debug!("{} Fishnet::JobAcquired({})", p, id);
-                    }
-                    FishnetMsg::JobAborted(id) => {
-                        // TODO: do something with this?
-                        debug!("{} Fishnet::JobAborted({})", p, id);
-                    }
-                    FishnetMsg::JobCompleted(id) => {
-                        tokio::spawn(async move {
-                            debug!("{} Fishnet::JobCompleted({})", p, id);
-                            match get_job(db.clone(), id.clone().into()).await {
-                                Result::Err(err) => {
-                                    error!("{} Unable find job for {:?}. Error: {:?}", p, id.clone(), err);
-                                }
-                                Result::Ok(None) => {
-                                    error!("{} Unable find job for {:?}.", p, id.clone());
-                                }
-                                Result::Ok(Some(job)) => {
-                                    if let Some(report_id) = job.report_id {
-                                        match find_report(db.clone(), report_id.clone()).await {
-                                            Result::Err(err) => {
-                                                error!("{} Unable find report for {:?}. Error: {:?}", p, report_id.clone(), err);
-                                            }
-                                            Result::Ok(None) => {
-                                                error!("{} Unable find report for {:?}.", p, report_id.clone());
-                                            }
-                                            Result::Ok(Some(report)) => {
-                                                debug!("{} Fishnet::JobCompleted({})", p, id);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
+                    FishnetMsg::JobAcquired(id) => handle_job_acquired(db.clone(), id.clone()),
+                    FishnetMsg::JobAborted(id) => handle_job_aborted(db.clone(), id.clone()),
+                    FishnetMsg::JobCompleted(id) => handle_job_completed(db.clone(), id.clone()),
                 }
             } else if let Err(e) = msg {
                 match e {
                     RecvError::Lagged(n) => {
-                        warn!(
-                            "irwin::api::fishnet_listener unable to keep up. Skip {} messages",
-                            n
-                        );
+                        warn!("{} unable to keep up. Skip {} messages", p, n);
                     }
                     RecvError::Closed => {
                         should_stop = true;
