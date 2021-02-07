@@ -92,7 +92,7 @@ pub struct CreateJob {
 impl From<CreateJob> for m::Job {
     fn from(job: CreateJob) -> m::Job {
         m::Job {
-            _id: ObjectId::new(),
+            _id: m::JobId(ObjectId::new()),
             game_id: job.game_id,
             report_id: job.report_id,
             analysis_type: job.analysis_type,
@@ -144,10 +144,10 @@ pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Jo
         .transpose()?)
 }
 
-pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: ObjectId) -> Result<()> {
+pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Result<()> {
     m::Job::coll(db)
         .update_one(
-            doc! { "_id": id, "owner": api_user.key.clone() },
+            doc! { "_id": id.0, "owner": api_user.key.clone() },
             UpdateModifications::Document(doc! {"owner": Bson::Null}),
             None,
         )
@@ -165,9 +165,9 @@ pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameI
 }
 
 
-pub async fn is_job_completed(db: DbConn, id: ObjectId) -> Result<Option<bool>>  {
+pub async fn is_job_completed(db: DbConn, id: m::JobId) -> Result<Option<bool>>  {
     let job: m::Job = m::Job::coll(db.clone())
-        .find_one(doc! {"_id": id}, None)
+        .find_one(doc! {"_id": id.0}, None)
         .await?
         .map(from_document)
         .transpose()?
@@ -181,24 +181,24 @@ pub async fn is_job_completed(db: DbConn, id: ObjectId) -> Result<Option<bool>> 
     )
 }
 
-pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
+pub async fn delete_job(db: DbConn, id: m::JobId) -> Result<()> {
     m::Job::coll(db)
-        .delete_one(doc! { "_id": id }, None)
+        .delete_one(doc! { "_id": id.0 }, None)
         .await?;
     Ok(())
 }
 
-pub async fn get_user_job(db: DbConn, id: ObjectId, user: m::ApiUser) -> Result<Option<m::Job>> {
+pub async fn get_user_job(db: DbConn, id: m::JobId, user: m::ApiUser) -> Result<Option<m::Job>> {
     Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id, "owner": user.key}, None)
+        .find_one(doc! {"_id": id.0, "owner": user.key}, None)
         .await?
         .map(from_document)
         .transpose()?)
 }
 
-pub async fn get_job(db: DbConn, id: ObjectId) -> Result<Option<m::Job>> {
+pub async fn get_job(db: DbConn, id: m::JobId) -> Result<Option<m::Job>> {
     Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id}, None)
+        .find_one(doc! {"_id": id.0}, None)
         .await?
         .map(from_document)
         .transpose()?)

@@ -27,6 +27,7 @@ use shakmaty::{fen::Fen, uci::Uci};
 use crate::db::DbConn;
 use crate::deepq::model as m;
 use crate::error::Result;
+use crate::fishnet::model::{JobId};
 
 #[derive(Debug, Clone)]
 pub struct CreateReport {
@@ -145,7 +146,7 @@ pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>
 
 #[derive(Debug, Clone)]
 pub struct UpdateGameAnalysis {
-    pub job_id: ObjectId,
+    pub job_id: JobId,
     pub game_id: m::GameId,
     pub source_id: m::UserId,
     pub analysis: Vec<Option<m::PlyAnalysis>>,
@@ -185,10 +186,10 @@ pub async fn upsert_one_game_analysis(
     Ok(analysis._id)
 }
 
-pub async fn find_analysis_for_job(db: DbConn, job_id: ObjectId) -> Result<Option<m::GameAnalysis>> {
+pub async fn find_analysis_for_job(db: DbConn, job_id: JobId) -> Result<Option<m::GameAnalysis>> {
     let analysis_coll = m::GameAnalysis::coll(db.clone());
     Ok(analysis_coll
-        .find_one(doc! {"job_id": job_id}, None)
+        .find_one(doc! {"job_id": job_id.0}, None)
         .await?
         .map(from_document)
         .transpose()?)

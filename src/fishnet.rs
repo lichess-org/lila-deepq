@@ -20,7 +20,7 @@ pub mod filters;
 pub mod handlers;
 pub mod model;
 
-use crate::deepq::model::GameId;
+use crate::fishnet::model::JobId;
 use crate::db::DbConn;
 
 use tokio::sync::broadcast;
@@ -31,9 +31,9 @@ use warp::{
 
 #[derive(Debug, Clone)]
 pub enum FishnetMsg {
-    JobAcquired(GameId),
-    JobAborted(GameId),
-    JobCompleted(GameId),
+    JobAcquired(JobId),
+    JobAborted(JobId),
+    JobCompleted(JobId),
 }
 
 

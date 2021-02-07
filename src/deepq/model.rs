@@ -23,6 +23,7 @@ use shakmaty::uci::Uci;
 use mongodb::Collection;
 
 use crate::db::DbConn;
+use crate::fishnet::model::{JobId};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct UserId(pub String);
@@ -175,7 +176,7 @@ pub struct Nodes {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameAnalysis {
     pub _id: ObjectId,
-    pub job_id: ObjectId,
+    pub job_id: JobId,
     pub game_id: GameId,
     pub source_id: UserId,
     pub analysis: Vec<Option<PlyAnalysis>>,

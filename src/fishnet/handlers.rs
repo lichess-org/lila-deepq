@@ -39,7 +39,7 @@ use crate::deepq::api::{
     find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
 };
 use crate::deepq::model::{PlyAnalysis, UserId, Nodes as ModelNodes};
-use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with, Id};
+use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with};
 use crate::error::{Error, Result};
 
 // TODO: make this complete for all of the variant types we should support.
@@ -231,7 +231,7 @@ async fn acquire_job(
                 Some(game) => {
                     send(
                         tx,
-                        FishnetMsg::JobAcquired(job.game_id.clone().into())
+                        FishnetMsg::JobAcquired(job._id.clone())
                     );
                     let job = Job {
                         game_id: job.game_id.to_string(),
@@ -260,15 +260,12 @@ async fn abort_job(
     db: DbConn,
     tx: broadcast::Sender<FishnetMsg>,
     api_user: f::Authorized<m::ApiUser>,
-    job_id: Id,
+    job_id: m::JobId,
 ) -> StdResult<Option<()>, Rejection> {
     let api_user = api_user.val();
     info!("abort_job > {}", api_user.name);
-    api::unassign_job(db.clone(), api_user, job_id.clone().into()).await?;
-    let game_id = api::game_id_for_job_id(db.clone(), job_id.clone().into()).await?;
-    if let Some(game_id) = game_id {
-        send(tx, FishnetMsg::JobAborted(game_id));
-    }
+    api::unassign_job(db.clone(), api_user, job_id.clone()).await?;
+    send(tx, FishnetMsg::JobAborted(job_id));
     Ok(None) // None because we're going to return no-content
 }
 
@@ -278,7 +275,7 @@ async fn save_job_analysis(
     db: DbConn,
     tx: broadcast::Sender<FishnetMsg>,
     api_user: f::Authorized<m::ApiUser>,
-    job_id: Id,
+    job_id: m::JobId,
     report: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
     let api_user = api_user.val();
@@ -303,7 +300,7 @@ async fn save_job_analysis(
     debug!("save_job_analysis > upsert_one_game_analysis > success");
     api::is_job_completed(db.clone(), job.clone()._id).await?.filter(|b| *b).map(|_| {
         debug!("save_job_analysis > JobCompleted");
-        send(tx, FishnetMsg::JobCompleted(job.clone().game_id.into()));
+        send(tx, FishnetMsg::JobCompleted(job._id.clone()));
     });
     Ok(None)
 }

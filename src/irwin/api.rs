@@ -21,8 +21,8 @@ use std::convert::{TryFrom, TryInto};
 use std::iter::Iterator;
 use std::result::Result as StdResult;
 
-use log::{debug, warn};
 use futures::future::try_join_all;
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
 use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
@@ -30,11 +30,12 @@ use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::db::DbConn;
 use crate::deepq::api::{
-    insert_many_games, insert_one_report, precedence_for_origin, CreateGame, CreateReport,
+    find_report, insert_many_games, insert_one_report, precedence_for_origin, CreateGame,
+    CreateReport,
 };
 use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
-use crate::fishnet::api::{insert_many_jobs, CreateJob, get_job};
+use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
 use crate::fishnet::model::AnalysisType;
 use crate::fishnet::FishnetMsg;
 
@@ -136,57 +137,92 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     let report_id = insert_one_report(db.clone(), request.clone().into()).await?;
 
     let fishnet_jobs: Vec<CreateJob> = request.into();
-    let fishnet_jobs: Vec<CreateJob> = fishnet_jobs.iter().map(|j: &CreateJob| {
-        CreateJob{
+    let fishnet_jobs: Vec<CreateJob> = fishnet_jobs
+        .iter()
+        .map(|j: &CreateJob| CreateJob {
             game_id: j.game_id.clone(),
             report_id: Some(report_id.clone()),
             analysis_type: j.analysis_type.clone(),
             precedence: j.precedence,
-        }
-    }).collect();
+        })
+        .collect();
 
     try_join_all(insert_many_jobs(db.clone(), fishnet_jobs.iter().by_ref())).await?;
     Ok(())
 }
 
-pub fn fishnet_listener(_db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()>{ 
+pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()> {
     tokio::spawn(async move {
         let mut should_stop: bool = false;
         let mut rx = tx.subscribe();
         while !should_stop {
+            let db = db.clone();
             let msg = rx.recv().await;
             if let Ok(msg) = msg {
                 match msg {
                     FishnetMsg::JobAcquired(id) => {
                         // TODO: do something with this?
-                        debug!("irwin::api::fishnet_listener - Fishnet::JobAcquired({})", id);
-                    },
+                        debug!(
+                            "irwin::api::fishnet_listener - Fishnet::JobAcquired({})",
+                            id
+                        );
+                    }
                     FishnetMsg::JobAborted(id) => {
                         // TODO: do something with this?
                         debug!("irwin::api::fishnet_listener - Fishnet::JobAborted({})", id);
-                    },
+                    }
                     FishnetMsg::JobCompleted(id) => {
-                        debug!("irwin::api::fishnet_listener - Fishnet::JobCompleted({})", id);
-                        let job = get_job(db.clone(), id.clone()).await?;
-                        if let Some(report_id) = job.report_id {
-                            let report = api::find_report(db.clone(), report_id.clone()).await?;
-                            debug!("irwin::api::fishnet_listener - Fishnet::JobCompleted({})", id);
-                        }
+                        tokio::spawn(async move {
+                            debug!(
+                                "irwin::api::fishnet_listener - Fishnet::JobCompleted({})",
+                                id
+                            );
+                            match get_job(db.clone(), id.clone().into()).await {
+                                Result::Err(err) => {
+                                    error!("irwin::api::fishnet_listener > Unable find job for {:?}. Error: {:?}", id.clone(), err);
+                                }
+                                Result::Ok(None) => {
+                                    error!(
+                                        "irwin::api::fishnet_listener > Unable find job for {:?}.",
+                                        id.clone()
+                                    );
+                                }
+                                Result::Ok(Some(job)) => {
+                                    if let Some(report_id) = job.report_id {
+                                        match find_report(db.clone(), report_id.clone()).await {
+                                            Result::Err(err) => {
+                                                error!("irwin::api::fishnet_listener > Unable find report for {:?}. Error: {:?}", report_id.clone(), err);
+                                            }
+                                            Result::Ok(None) => {
+                                                error!("irwin::api::fishnet_listener > Unable find report for {:?}.", report_id.clone());
+                                            }
+                                            Result::Ok(Some(report)) => {
+                                                debug!(
+                                                    "irwin::api::fishnet_listener - Fishnet::JobCompleted({})",
+                                                    id
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
                     }
                 }
             } else if let Err(e) = msg {
                 match e {
                     RecvError::Lagged(n) => {
-                        warn!("irwin::api::fishnet_listener unable to keep up. Skip {} messages", n);
-                    },
+                        warn!(
+                            "irwin::api::fishnet_listener unable to keep up. Skip {} messages",
+                            n
+                        );
+                    }
                     RecvError::Closed => {
                         should_stop = true;
                     }
                 }
             }
         }
-
     });
     Ok(())
 }
-

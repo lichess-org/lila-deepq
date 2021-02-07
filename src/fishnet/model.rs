@@ -14,6 +14,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
+use std::str::FromStr;
 
 use chrono::prelude::*;
 use derive_more::{Display, From};
@@ -26,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
 use crate::deepq::model::{GameId, UserId};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct Key(pub String);
@@ -70,9 +71,27 @@ impl ApiUser {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
+pub struct JobId(pub ObjectId);
+
+impl From<JobId> for ObjectId {
+    fn from(ji: JobId) -> ObjectId {
+        ji.0
+    }
+}
+
+impl FromStr for JobId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(JobId(ObjectId::with_string(s)?))
+    }
+}
+
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Job {
-    pub _id: ObjectId,
+    pub _id: JobId,
     pub game_id: GameId,
     pub analysis_type: AnalysisType,
     pub precedence: i32,
