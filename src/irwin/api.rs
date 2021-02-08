@@ -21,7 +21,7 @@ use std::convert::{TryFrom, TryInto};
 use std::iter::Iterator;
 use std::result::Result as StdResult;
 
-use futures::future::try_join_all;
+use futures::{future::try_join_all, stream::StreamExt};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
@@ -33,10 +33,10 @@ use crate::deepq::api::{
     find_report, insert_many_games, insert_one_report, precedence_for_origin, CreateGame,
     CreateReport,
 };
-use crate::deepq::model::{GameId, ReportOrigin, ReportType, Score, UserId};
+use crate::deepq::model::{GameId, Report, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
-use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
-use crate::fishnet::model::{AnalysisType, JobId};
+use crate::fishnet::api::{get_job, insert_many_jobs, is_job_completed, CreateJob};
+use crate::fishnet::model::{AnalysisType, Job, JobId};
 use crate::fishnet::FishnetMsg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -166,7 +166,7 @@ fn handle_job_completed(db: DbConn, job_id: JobId) {
         let p = "irwin::api::fishnet_listener >";
         debug!("{} Fishnet::JobCompleted({})", p, job_id);
         match get_job(db.clone(), job_id.clone().into()).await {
-            Result::Err(err) => {
+            Err(err) => {
                 error!(
                     "{} Unable find job for {:?}. Error: {:?}",
                     p,
@@ -174,13 +174,13 @@ fn handle_job_completed(db: DbConn, job_id: JobId) {
                     err
                 );
             }
-            Result::Ok(None) => {
+            Ok(None) => {
                 error!("{} Unable find job for {:?}.", p, job_id.clone());
             }
-            Result::Ok(Some(job)) => {
+            Ok(Some(job)) => {
                 if let Some(report_id) = job.report_id {
                     match find_report(db.clone(), report_id.clone()).await {
-                        Result::Err(err) => {
+                        Err(err) => {
                             error!(
                                 "{} Unable find report for {:?}. Error: {:?}",
                                 p,
@@ -188,21 +188,83 @@ fn handle_job_completed(db: DbConn, job_id: JobId) {
                                 err
                             );
                         }
-                        Result::Ok(None) => {
-                            error!(
-                                "{} Unable find report for {:?}.",
-                                p,
-                                report_id.clone()
-                            );
+                        Ok(None) => {
+                            error!("{} Unable find report for {:?}.", p, report_id.clone());
                         }
-                        Result::Ok(Some(report)) => {
+                        Ok(Some(report)) => {
                             debug!("{} Fishnet::JobCompleted({})", p, job_id);
+                            match update_report_completeness(db.clone(), report).await {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    error!(
+                                        "{} Unable to update report completness for report {:?}. Error: {:?}",
+                                        p,
+                                        report_id.clone(),
+                                        err
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     });
+}
+
+async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
+    let p = "irwin::api::report_complete_percentage >";
+    let mut jobs = Job::find_by_report(db.clone(), report.clone()).await?;
+    let mut complete = 0f64;
+    let mut incomplete = 0f64;
+
+    while let Some(job_result) = jobs.next().await {
+        let is_complete = match job_result {
+            Ok(job) => match is_job_completed(db.clone(), job._id.clone()).await {
+                Result::Err(err) => {
+                    error!(
+                        "{} Unable find job completeness for job {:?}. Error: {:?}",
+                        p,
+                        job._id.clone(),
+                        err
+                    );
+                    false
+                }
+                Result::Ok(None) => {
+                    error!(
+                        "{} Unable find job completeness for job {:?}.",
+                        p,
+                        job._id.clone()
+                    );
+                    false
+                }
+                Result::Ok(Some(val)) => val,
+            },
+            Err(err) => {
+                error!(
+                    "{} Error retrieving jobs for report: {}. Error: {}",
+                    p,
+                    report._id.clone(),
+                    err
+                );
+                false
+            }
+        };
+        if is_complete {
+            complete += 1f64;
+        } else {
+            incomplete += 1f64;
+        }
+    }
+    Ok(complete/(complete+incomplete))
+}
+
+async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
+    let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
+    if percentage >= 1f64 {
+        debug!("Submit to irwin!");
+    }
+    Ok(())
 }
 
 pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()> {

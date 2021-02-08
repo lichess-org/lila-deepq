@@ -18,6 +18,8 @@ use std::str::FromStr;
 
 use chrono::prelude::*;
 use derive_more::{Display, From};
+use futures::stream::{Stream, StreamExt};
+use log::warn;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, Bson, DateTime},
     options::FindOneOptions,
@@ -26,7 +28,7 @@ use mongodb::{
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId};
+use crate::deepq::model::{GameId, Report, UserId};
 use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -88,7 +90,6 @@ impl FromStr for JobId {
     }
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Job {
     pub _id: JobId,
@@ -115,6 +116,36 @@ impl Job {
             "analysis_type": { "$eq": analysis_type },
         };
         Ok(Job::coll(db.clone()).count_documents(filter, None).await?)
+    }
+
+    pub async fn find_by_report(
+        db: DbConn,
+        report: Report,
+    ) -> Result<impl Stream<Item = Result<Job>>> {
+        let p = "Job::find_by_report >";
+        let filter = doc! {
+            "report": { "$eq": report._id.clone() }
+        };
+        Ok(Job::coll(db.clone())
+            .find(filter, None)
+            .await?
+            .filter_map(move |doc_result| async move {
+                match !doc_result.is_ok() {
+                    false => {
+                        warn!(
+                            "{} error processing cursor of jobs: {:?}.",
+                            p,
+                            doc_result.expect_err("silly rabbit")
+                        );
+                        None
+                    },
+                    true => Some(doc_result.expect("silly rabbit"))
+                }
+            })
+            .map(from_document::<Job>)
+            .map(|i| i.map_err(|e| e.into()))
+            .boxed()
+        )
     }
 
     pub async fn queued_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {
