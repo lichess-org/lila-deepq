@@ -26,6 +26,7 @@ use mongodb::error::Error as _MongoDBError;
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
+use tokio::task::JoinError;
 
 use thiserror::Error;
 
@@ -103,6 +104,9 @@ pub enum Error {
 
     #[error("I haven't implemented this yet")]
     Unimplemented,
+
+    #[error("Unable to join tokio task")]
+    JoinError(#[from] JoinError),
 }
 
 impl reject::Reject for Error {}
