@@ -22,7 +22,7 @@ use std::iter::Iterator;
 use std::result::Result as StdResult;
 
 use futures::{future::try_join_all, stream::StreamExt};
-use log::{debug, error, warn};
+use log::{debug, info, error, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
 use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
@@ -151,69 +151,67 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     Ok(())
 }
 
-fn handle_job_acquired(_db: DbConn, job_id: JobId) {
-    let p = "irwin::api::fishnet_listener >";
+async fn handle_job_acquired(_db: DbConn, job_id: JobId) {
+    let p = "handle_job_acquired >";
     debug!("{} Fishnet::JobAcquired({})", p, job_id);
 }
 
-fn handle_job_aborted(_db: DbConn, job_id: JobId) {
-    let p = "irwin::api::fishnet_listener >";
+async fn handle_job_aborted(_db: DbConn, job_id: JobId) {
+    let p = "handle_job_aborted >";
     debug!("{} Fishnet::JobAborted({})", p, job_id);
 }
 
-fn handle_job_completed(db: DbConn, job_id: JobId) {
-    tokio::spawn(async move {
-        let p = "irwin::api::fishnet_listener >";
-        debug!("{} Fishnet::JobCompleted({})", p, job_id);
-        match get_job(db.clone(), job_id.clone().into()).await {
-            Err(err) => {
-                error!(
-                    "{} Unable find job for {:?}. Error: {:?}",
-                    p,
-                    job_id.clone(),
-                    err
-                );
-            }
-            Ok(None) => {
-                error!("{} Unable find job for {:?}.", p, job_id.clone());
-            }
-            Ok(Some(job)) => {
-                if let Some(report_id) = job.report_id {
-                    match find_report(db.clone(), report_id.clone()).await {
-                        Err(err) => {
-                            error!(
-                                "{} Unable find report for {:?}. Error: {:?}",
-                                p,
-                                report_id.clone(),
-                                err
-                            );
-                        }
-                        Ok(None) => {
-                            error!("{} Unable find report for {:?}.", p, report_id.clone());
-                        }
-                        Ok(Some(report)) => {
-                            debug!("{} Fishnet::JobCompleted({})", p, job_id);
-                            match update_report_completeness(db.clone(), report).await {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    error!(
-                                        "{} Unable to update report completness for report {:?}. Error: {:?}",
-                                        p,
-                                        report_id.clone(),
-                                        err
-                                    );
-                                }
+async fn handle_job_completed(db: DbConn, job_id: JobId) {
+    let p = "handle_job_completed >";
+    info!("{} Fishnet::JobCompleted({}) > starting", p, job_id);
+    match get_job(db.clone(), job_id.clone().into()).await {
+        Err(err) => {
+            error!(
+                "{} Unable find job for {:?}. Error: {:?}",
+                p,
+                job_id.clone(),
+                err
+            );
+        }
+        Ok(None) => {
+            error!("{} Unable find job for {:?}.", p, job_id.clone());
+        }
+        Ok(Some(job)) => {
+            if let Some(report_id) = job.report_id {
+                match find_report(db.clone(), report_id.clone()).await {
+                    Err(err) => {
+                        error!(
+                            "{} Unable find report for {:?}. Error: {:?}",
+                            p,
+                            report_id.clone(),
+                            err
+                        );
+                    }
+                    Ok(None) => {
+                        error!("{} Unable find report for {:?}.", p, report_id.clone());
+                    }
+                    Ok(Some(report)) => {
+                        debug!("{} Fishnet::JobCompleted({}) > handled", p, job_id);
+                        match update_report_completeness(db.clone(), report).await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                error!(
+                                    "{} Unable to update report completness for report {:?}. Error: {:?}",
+                                    p,
+                                    report_id.clone(),
+                                    err
+                                );
                             }
                         }
                     }
                 }
             }
         }
-    });
+    }
 }
 
 async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
-    let p = "irwin::api::report_complete_percentage >";
+    let p = "report_complete_percentage >";
     let mut jobs = Job::find_by_report(db.clone(), report.clone()).await?;
     let mut complete = 0f64;
     let mut incomplete = 0f64;
@@ -230,15 +228,7 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
                     );
                     false
                 }
-                Result::Ok(None) => {
-                    error!(
-                        "{} Unable find job completeness for job {:?}.",
-                        p,
-                        job._id.clone()
-                    );
-                    false
-                }
-                Result::Ok(Some(val)) => val,
+                Result::Ok(val) => val,
             },
             Err(err) => {
                 error!(
@@ -260,38 +250,43 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
 }
 
 async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
+    let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
+        info!("{} > Report({:?}) > complete. Submitting to irwin!", &p, report._id);
+        debug!("Update Report completed status?");
         debug!("Submit to irwin!");
+    } else {
+        info!("{} > Report({:?}) > {:.1}% complete!", &p, report._id, percentage*100f64);
     }
     Ok(())
 }
 
-pub fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> Result<()> {
-    tokio::spawn(async move {
-        let p = "irwin::api::fishnet_listener >";
-        let mut should_stop: bool = false;
-        let mut rx = tx.subscribe();
-        while !should_stop {
-            let db = db.clone();
-            let msg = rx.recv().await;
-            if let Ok(msg) = msg {
-                match msg {
-                    FishnetMsg::JobAcquired(id) => handle_job_acquired(db.clone(), id.clone()),
-                    FishnetMsg::JobAborted(id) => handle_job_aborted(db.clone(), id.clone()),
-                    FishnetMsg::JobCompleted(id) => handle_job_completed(db.clone(), id.clone()),
+pub async fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) {
+    let p = "fishnet_listener >";
+    let mut should_stop: bool = false;
+    let mut rx = tx.subscribe();
+    while !should_stop {
+        let db = db.clone();
+        let msg = rx.recv().await;
+        debug!("Received message: {:?}", msg);
+        if let Ok(msg) = msg {
+            if let FishnetMsg::JobAcquired(id) = msg {
+                handle_job_acquired(db.clone(), id.clone()).await;
+            } else if let FishnetMsg::JobAborted(id) = msg {
+                handle_job_aborted(db.clone(), id.clone()).await;
+            } else if let FishnetMsg::JobCompleted(id) = msg {
+                handle_job_completed(db.clone(), id.clone()).await;
+            }
+        } else if let Err(e) = msg {
+            match e {
+                RecvError::Lagged(n) => {
+                    warn!("{} unable to keep up. Skip {} messages", p, n);
                 }
-            } else if let Err(e) = msg {
-                match e {
-                    RecvError::Lagged(n) => {
-                        warn!("{} unable to keep up. Skip {} messages", p, n);
-                    }
-                    RecvError::Closed => {
-                        should_stop = true;
-                    }
+                RecvError::Closed => {
+                    should_stop = true;
                 }
             }
         }
-    });
-    Ok(())
+    }
 }

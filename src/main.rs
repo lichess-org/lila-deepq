@@ -89,8 +89,10 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     info!("Mounting urls...");
     let app = fishnet.handlers(conn.clone());
 
-    info!("Starting Irwin Actor...");
-    irwin::api::fishnet_listener(conn.clone(), fishnet.tx.clone())?;
+    let fishnet_listener = tokio::spawn(async move {
+        info!("Starting Irwin Actor...");
+        irwin::api::fishnet_listener(conn.clone(), fishnet.tx.clone()).await;
+    });
 
     info!("Starting server...");
     let address: SocketAddr =
@@ -98,6 +100,8 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     warp::serve(warp::path("fishnet").and(app))
         .run(address)
         .await;
+
+    fishnet_listener.await?;
 
     Ok(())
 }

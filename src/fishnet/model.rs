@@ -124,13 +124,13 @@ impl Job {
     ) -> Result<impl Stream<Item = Result<Job>>> {
         let p = "Job::find_by_report >";
         let filter = doc! {
-            "report": { "$eq": report._id.clone() }
+            "report_id": { "$eq": report._id.clone() }
         };
         Ok(Job::coll(db.clone())
             .find(filter, None)
             .await?
             .filter_map(move |doc_result| async move {
-                match !doc_result.is_ok() {
+                match doc_result.is_ok() {
                     false => {
                         warn!(
                             "{} error processing cursor of jobs: {:?}.",

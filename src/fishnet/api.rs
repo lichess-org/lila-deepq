@@ -30,8 +30,8 @@ use rand::{thread_rng, Rng};
 use serde::Serialize;
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId, GameAnalysis};
-use crate::deepq::api::{find_analysis_for_job};
+use crate::deepq::api::find_analysis_for_job;
+use crate::deepq::model::{GameAnalysis, GameId, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
 
@@ -63,8 +63,7 @@ impl From<CreateApiUser> for m::ApiUser {
 pub async fn create_api_user(db: DbConn, create: CreateApiUser) -> Result<m::ApiUser> {
     let col = m::ApiUser::coll(db);
     let api_user: m::ApiUser = create.into();
-    col
-        .insert_one(to_document(&api_user)?, None)
+    col.insert_one(to_document(&api_user)?, None)
         .await?
         .inserted_id
         .as_object_id()
@@ -155,7 +154,7 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Res
     Ok(())
 }
 
-pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameId>>  {
+pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameId>> {
     Ok(m::Job::coll(db)
         .find_one(doc! {"_id": id}, None)
         .await?
@@ -164,8 +163,7 @@ pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameI
         .map(|d: m::Job| d.game_id))
 }
 
-
-pub async fn is_job_completed(db: DbConn, id: m::JobId) -> Result<Option<bool>>  {
+pub async fn is_job_completed(db: DbConn, id: m::JobId) -> Result<bool> {
     let job: m::Job = m::Job::coll(db.clone())
         .find_one(doc! {"_id": id.0}, None)
         .await?
@@ -173,12 +171,11 @@ pub async fn is_job_completed(db: DbConn, id: m::JobId) -> Result<Option<bool>> 
         .transpose()?
         .ok_or(Error::NotFoundError)?;
 
-    Ok(
-        find_analysis_for_job(db, job._id.clone()).await?
-        .map(|a: GameAnalysis| {
-            a.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
-        })
-    )
+    Ok(find_analysis_for_job(db, job._id.clone())
+        .await?
+        .map(|a: GameAnalysis| a.analysis.iter().filter(|o| o.is_none()).count() == 0_usize)
+        .or(Some(false))
+        .expect("This should always have a value"))
 }
 
 pub async fn delete_job(db: DbConn, id: m::JobId) -> Result<()> {

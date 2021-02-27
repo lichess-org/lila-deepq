@@ -197,6 +197,8 @@ fn send(
 ) {
     if let Err(err) = tx.send(msg.clone()) {
         error!("Unable to send msg: {:?} due to: {:?}", msg, err);
+    } else {
+        debug!("Msg sent: {:?}", msg);
     }
 }
 
@@ -247,7 +249,6 @@ async fn acquire_job(
                             depth: depth_for_job(&job),
                         },
                     };
-                    debug!("Some(job) = {:?}", job);
                     Some(job)
                 }
             }
@@ -279,7 +280,7 @@ async fn save_job_analysis(
     report: AnalysisReport,
 ) -> StdResult<Option<Job>, Rejection> {
     let api_user = api_user.val();
-    info!("save_job_analysis > User: {:?} / JobId: {:?}", api_user.name, job_id);
+    info!("save_job_analysis > {:?} > {:?}", api_user.name, job_id);
 
     let job = api::get_user_job(db.clone(), job_id.clone().into(), api_user.clone())
         .await?
@@ -298,10 +299,10 @@ async fn save_job_analysis(
     debug!("save_job_analysis > created UpdateGameAnalysis");
     upsert_one_game_analysis(db.clone(), analysis).await?;
     debug!("save_job_analysis > upsert_one_game_analysis > success");
-    api::is_job_completed(db.clone(), job.clone()._id).await?.filter(|b| *b).map(|_| {
+    if api::is_job_completed(db.clone(), job.clone()._id).await? {
         debug!("save_job_analysis > JobCompleted");
         send(tx, FishnetMsg::JobCompleted(job._id.clone()));
-    });
+    }
     Ok(None)
 }
 
