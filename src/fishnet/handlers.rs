@@ -36,7 +36,7 @@ use warp::{
 use super::{api, filters as f, model as m, FishnetMsg};
 use crate::db::DbConn;
 use crate::deepq::api::{
-    find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis,
+    find_game, starting_position, upsert_one_game_analysis, UpdateGameAnalysis
 };
 use crate::deepq::model::{PlyAnalysis, UserId, Nodes as ModelNodes};
 use crate::http::{json_object_or_no_content, recover, required_or_unauthenticated, with};

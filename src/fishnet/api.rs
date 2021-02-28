@@ -31,7 +31,7 @@ use serde::Serialize;
 
 use crate::db::DbConn;
 use crate::deepq::api::find_analysis_for_job;
-use crate::deepq::model::{GameAnalysis, GameId, UserId};
+use crate::deepq::model::{GameId, UserId, ReportId};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
 
@@ -83,7 +83,7 @@ pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>>
 #[derive(Debug, Clone)]
 pub struct CreateJob {
     pub game_id: GameId,
-    pub report_id: Option<ObjectId>,
+    pub report_id: Option<ReportId>,
     pub analysis_type: m::AnalysisType,
     pub precedence: i32,
 }
@@ -154,9 +154,9 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Res
     Ok(())
 }
 
-pub async fn game_id_for_job_id(db: DbConn, id: ObjectId) -> Result<Option<GameId>> {
+pub async fn game_id_for_job_id(db: DbConn, id: m::JobId) -> Result<Option<GameId>> {
     Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id}, None)
+        .find_one(doc! {"_id": id.0}, None)
         .await?
         .map(from_document)
         .transpose()?

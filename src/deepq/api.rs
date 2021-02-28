@@ -40,7 +40,7 @@ pub struct CreateReport {
 impl From<CreateReport> for m::Report {
     fn from(report: CreateReport) -> m::Report {
         m::Report {
-            _id: ObjectId::new(),
+            _id: m::ReportId(ObjectId::new()),
             user_id: report.user_id,
             origin: report.origin,
             report_type: report.report_type,
@@ -51,19 +51,17 @@ impl From<CreateReport> for m::Report {
     }
 }
 
-pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<ObjectId> {
+pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<m::ReportId> {
     let reports_coll = m::Report::coll(db.clone());
     let report: m::Report = report.into();
-    reports_coll
-        .insert_one(to_document(&report)?, None)
-        .await?;
+    reports_coll.insert_one(to_document(&report)?, None).await?;
     Ok(report._id)
 }
 
-pub async fn find_report(db: DbConn, id: ObjectId) -> Result<Option<m::Report>> {
+pub async fn find_report(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
     let reports_coll = m::Report::coll(db.clone());
     Ok(reports_coll
-        .find_one(doc! {"_id": id}, None)
+        .find_one(doc! {"_id": id.0}, None)
         .await?
         .map(from_document)
         .transpose()?)
@@ -162,7 +160,7 @@ impl From<UpdateGameAnalysis> for m::GameAnalysis {
             job_id: g.job_id,
             game_id: g.game_id,
             source_id: g.source_id,
-            analysis: g.analysis,
+            analysis: g.analysis.clone(),
             requested_pvs: g.requested_pvs,
             requested_depth: g.requested_depth,
             requested_nodes: g.requested_nodes,
@@ -171,7 +169,8 @@ impl From<UpdateGameAnalysis> for m::GameAnalysis {
 }
 
 pub async fn upsert_one_game_analysis(
-    db: DbConn, analysis: UpdateGameAnalysis
+    db: DbConn,
+    analysis: UpdateGameAnalysis,
 ) -> Result<ObjectId> {
     let analysis_coll = m::GameAnalysis::coll(db.clone());
     let analysis: m::GameAnalysis = analysis.into();

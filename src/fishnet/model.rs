@@ -28,7 +28,7 @@ use mongodb::{
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, Report, UserId};
+use crate::deepq::model::{GameId, Report, UserId, ReportId};
 use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -98,7 +98,7 @@ pub struct Job {
     pub precedence: i32,
     pub owner: Option<String>, // TODO: this should be the key from the database
     pub date_last_updated: DateTime,
-    pub report_id: Option<ObjectId>,
+    pub report_id: Option<ReportId>,
 }
 
 impl Job {
@@ -124,7 +124,7 @@ impl Job {
     ) -> Result<impl Stream<Item = Result<Job>>> {
         let p = "Job::find_by_report >";
         let filter = doc! {
-            "report_id": { "$eq": report._id.clone() }
+            "report_id": { "$eq": report._id.0.clone() }
         };
         Ok(Job::coll(db.clone())
             .find(filter, None)

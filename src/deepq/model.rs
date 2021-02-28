@@ -14,16 +14,18 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
+use std::str::FromStr;
 
 use derive_more::{Display, From};
 use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
+use mongodb::Collection;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, SpaceSeparator, StringWithSeparator};
 use shakmaty::uci::Uci;
-use mongodb::Collection;
 
 use crate::db::DbConn;
-use crate::fishnet::model::{JobId};
+use crate::error::{Error, Result};
+use crate::fishnet::model::JobId;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct UserId(pub String);
@@ -73,9 +75,25 @@ impl From<ReportType> for Bson {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
+pub struct ReportId(pub ObjectId);
+
+impl From<ReportId> for ObjectId {
+    fn from(ri: ReportId) -> ObjectId {
+        ri.0
+    }
+}
+
+impl FromStr for ReportId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(ReportId(ObjectId::with_string(s)?))
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Report {
-    pub _id: ObjectId,
+    pub _id: ReportId,
     pub user_id: UserId,
     pub date_requested: DateTime,
     pub date_completed: Option<DateTime>,
