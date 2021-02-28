@@ -27,7 +27,7 @@ use shakmaty::{fen::Fen, uci::Uci};
 use crate::db::DbConn;
 use crate::deepq::model as m;
 use crate::error::Result;
-use crate::fishnet::model::{JobId};
+use crate::fishnet::model::JobId;
 
 #[derive(Debug, Clone)]
 pub struct CreateReport {
