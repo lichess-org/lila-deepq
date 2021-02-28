@@ -20,7 +20,7 @@ use futures::future::Future;
 use log::debug;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_document, DateTime as BsonDateTime},
-    options::UpdateOptions,
+    options::{UpdateModifications, UpdateOptions},
 };
 use shakmaty::{fen::Fen, uci::Uci};
 
@@ -47,6 +47,7 @@ impl From<CreateReport> for m::Report {
             games: report.games,
             date_requested: BsonDateTime(Utc::now()),
             date_completed: None,
+            sent_to_irwin: false,
         }
     }
 }
@@ -56,6 +57,18 @@ pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<m::Re
     let report: m::Report = report.into();
     reports_coll.insert_one(to_document(&report)?, None).await?;
     Ok(report._id)
+}
+
+pub async fn atomically_update_sent_to_irwin(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
+    Ok(m::Report::coll(db)
+        .find_one_and_update(
+            doc! {"_id": {"$eq": id.0}, "sent_to_irwin": { "$eq": false }},
+            UpdateModifications::Document(doc! {"$set": { "sent_to_irwin": true }}),
+            None,
+        )
+        .await?
+        .map(from_document)
+        .transpose()?)
 }
 
 pub async fn find_report(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {

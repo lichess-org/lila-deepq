@@ -30,7 +30,6 @@ use rand::{thread_rng, Rng};
 use serde::Serialize;
 
 use crate::db::DbConn;
-use crate::deepq::api::find_analysis_for_job;
 use crate::deepq::model::{GameId, UserId, ReportId};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
@@ -98,6 +97,7 @@ impl From<CreateJob> for m::Job {
             precedence: job.precedence,
             owner: None,
             date_last_updated: BsonDateTime(Utc::now()),
+            is_complete: false
         }
     }
 }
@@ -163,19 +163,15 @@ pub async fn game_id_for_job_id(db: DbConn, id: m::JobId) -> Result<Option<GameI
         .map(|d: m::Job| d.game_id))
 }
 
-pub async fn is_job_completed(db: DbConn, id: m::JobId) -> Result<bool> {
-    let job: m::Job = m::Job::coll(db.clone())
-        .find_one(doc! {"_id": id.0}, None)
-        .await?
-        .map(from_document)
-        .transpose()?
-        .ok_or(Error::NotFoundError)?;
-
-    Ok(find_analysis_for_job(db, job._id.clone())
-        .await?
-        .map(|a: GameAnalysis| a.analysis.iter().filter(|o| o.is_none()).count() == 0_usize)
-        .or(Some(false))
-        .expect("This should always have a value"))
+pub async fn set_complete(db: DbConn, id: m::JobId) -> Result<()> {
+    m::Job::coll(db)
+        .update_one(
+            doc! {"_id": {"$eq": id.0}},
+            UpdateModifications::Document(doc! {"$set": { "is_complete": true }}),
+            None,
+        )
+        .await?;
+    Ok(())
 }
 
 pub async fn delete_job(db: DbConn, id: m::JobId) -> Result<()> {

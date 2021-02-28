@@ -35,7 +35,7 @@ use crate::deepq::api::{
 };
 use crate::deepq::model::{GameId, Report, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
-use crate::fishnet::api::{get_job, insert_many_jobs, is_job_completed, CreateJob};
+use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
 use crate::fishnet::model::{AnalysisType, Job, JobId};
 use crate::fishnet::FishnetMsg;
 
@@ -163,7 +163,6 @@ async fn handle_job_aborted(_db: DbConn, job_id: JobId) {
 
 async fn handle_job_completed(db: DbConn, job_id: JobId) {
     let p = "handle_job_completed >";
-    info!("{} Fishnet::JobCompleted({}) > starting", p, job_id);
     match get_job(db.clone(), job_id.clone().into()).await {
         Err(err) => {
             error!(
@@ -218,18 +217,7 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
 
     while let Some(job_result) = jobs.next().await {
         let is_complete = match job_result {
-            Ok(job) => match is_job_completed(db.clone(), job._id.clone()).await {
-                Result::Err(err) => {
-                    error!(
-                        "{} Unable find job completeness for job {:?}. Error: {:?}",
-                        p,
-                        job._id.clone(),
-                        err
-                    );
-                    false
-                }
-                Result::Ok(val) => val,
-            },
+            Ok(job) => job.is_complete,
             Err(err) => {
                 error!(
                     "{} Error retrieving jobs for report: {}. Error: {}",
@@ -253,9 +241,13 @@ async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
-        info!("{} > Report({:?}) > complete. Submitting to irwin!", &p, report._id);
-        debug!("Update Report completed status?");
-        debug!("Submit to irwin!");
+        let report = api::atomically_update_sent_to_irwin(db, report._id).await?;
+        if let Some(report) {
+            info!("{} > Report({:?}) > complete. Submitting to irwin!", &p, report._id);
+        } else {
+            info!("{} > Report({:?}) > complete. Already submitted to irwin!", &p, report._id);
+        }
+
     } else {
         info!("{} > Report({:?}) > {:.1}% complete!", &p, report._id, percentage*100f64);
     }

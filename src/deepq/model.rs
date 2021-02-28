@@ -91,6 +91,7 @@ impl FromStr for ReportId {
         Ok(ReportId(ObjectId::with_string(s)?))
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Report {
     pub _id: ReportId,
@@ -100,6 +101,7 @@ pub struct Report {
     pub origin: ReportOrigin,
     pub report_type: ReportType,
     pub games: Vec<GameId>,
+    pub sent_to_irwin: bool,
 }
 
 impl Report {
@@ -206,5 +208,8 @@ pub struct GameAnalysis {
 impl GameAnalysis {
     pub fn coll(db: DbConn) -> Collection {
         db.database.collection("deepq_analysis")
+    }
+    pub fn is_analysis_complete(&self) -> bool {
+        self.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
     }
 }

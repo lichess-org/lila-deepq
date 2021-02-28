@@ -148,6 +148,11 @@ impl From<AnalysisReport> for m::Key {
         report.fishnet.api_key
     }
 }
+impl AnalysisReport {
+    pub fn is_complete(&self) -> bool {
+        self.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
+    }
+}
 
 // TODO: get this from config or env? or lila? (probably lila, tbh)
 fn nodes_for_job(job: &m::Job) -> Nodes {
@@ -290,7 +295,7 @@ async fn save_job_analysis(
     let analysis = UpdateGameAnalysis {
         job_id: job_id.into(),
         game_id: job.clone().game_id.into(),
-        analysis: report.analysis,
+        analysis: report.analysis.clone(),
         source_id: UserId(api_user._id.to_string()),
         requested_pvs: multipv_for_job(&job).map(|v| i32::from(v.get())),
         requested_depth: depth_for_job(&job).map(Into::into),
@@ -299,8 +304,9 @@ async fn save_job_analysis(
     debug!("save_job_analysis > created UpdateGameAnalysis");
     upsert_one_game_analysis(db.clone(), analysis).await?;
     debug!("save_job_analysis > upsert_one_game_analysis > success");
-    if api::is_job_completed(db.clone(), job.clone()._id).await? {
+    if report.is_complete() {
         debug!("save_job_analysis > JobCompleted");
+        api::set_complete(db, job._id.clone()).await?;
         send(tx, FishnetMsg::JobCompleted(job._id.clone()));
     }
     Ok(None)

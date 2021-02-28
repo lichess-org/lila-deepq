@@ -99,6 +99,7 @@ pub struct Job {
     pub owner: Option<String>, // TODO: this should be the key from the database
     pub date_last_updated: DateTime,
     pub report_id: Option<ReportId>,
+    pub is_complete: bool, // Denormalized cache of completion state.
 }
 
 impl Job {
