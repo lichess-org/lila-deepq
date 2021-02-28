@@ -59,7 +59,10 @@ pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<m::Re
     Ok(report._id)
 }
 
-pub async fn atomically_update_sent_to_irwin(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
+pub async fn atomically_update_sent_to_irwin(
+    db: DbConn,
+    id: m::ReportId,
+) -> Result<Option<m::Report>> {
     Ok(m::Report::coll(db)
         .find_one_and_update(
             doc! {"_id": {"$eq": id.0}, "sent_to_irwin": { "$eq": false }},
