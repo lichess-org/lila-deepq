@@ -22,7 +22,7 @@ use std::iter::Iterator;
 use std::result::Result as StdResult;
 
 use futures::{future::try_join_all, stream::StreamExt};
-use log::{debug, info, error, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
 use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
@@ -30,8 +30,8 @@ use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::db::DbConn;
 use crate::deepq::api::{
-    find_report, insert_many_games, insert_one_report, precedence_for_origin, CreateGame,
-    CreateReport,
+    atomically_update_sent_to_irwin, find_report, insert_many_games, insert_one_report,
+    precedence_for_origin, CreateGame, CreateReport,
 };
 use crate::deepq::model::{GameId, Report, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
@@ -234,22 +234,32 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
             incomplete += 1f64;
         }
     }
-    Ok(complete/(complete+incomplete))
+    Ok(complete / (complete + incomplete))
 }
 
 async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
-        let report = api::atomically_update_sent_to_irwin(db, report._id).await?;
-        if let Some(report) {
-            info!("{} > Report({:?}) > complete. Submitting to irwin!", &p, report._id);
+        let updated_report = atomically_update_sent_to_irwin(db, report._id.clone()).await?;
+        if let Some(updated_report) = updated_report {
+            info!(
+                "{} > Report({:?}) > complete. Submitting to irwin!",
+                &p, updated_report._id
+            );
         } else {
-            info!("{} > Report({:?}) > complete. Already submitted to irwin!", &p, report._id);
+            info!(
+                "{} > Report({:?}) > complete. Already submitted to irwin!",
+                &p, report._id
+            );
         }
-
     } else {
-        info!("{} > Report({:?}) > {:.1}% complete!", &p, report._id, percentage*100f64);
+        info!(
+            "{} > Report({:?}) > {:.1}% complete!",
+            &p,
+            report._id,
+            percentage * 100f64
+        );
     }
     Ok(())
 }
