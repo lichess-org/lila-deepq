@@ -19,14 +19,15 @@ use chrono::prelude::*;
 use futures::future::Future;
 use log::debug;
 use mongodb::{
-    bson::{doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime},
-    options::UpdateOptions,
+    bson::{doc, from_document, oid::ObjectId, to_document, DateTime as BsonDateTime},
+    options::{UpdateModifications, UpdateOptions},
 };
 use shakmaty::{fen::Fen, uci::Uci};
 
 use crate::db::DbConn;
 use crate::deepq::model as m;
 use crate::error::Result;
+use crate::fishnet::model::JobId;
 
 #[derive(Debug, Clone)]
 pub struct CreateReport {
@@ -39,24 +40,44 @@ pub struct CreateReport {
 impl From<CreateReport> for m::Report {
     fn from(report: CreateReport) -> m::Report {
         m::Report {
-            _id: ObjectId::new(),
+            _id: m::ReportId(ObjectId::new()),
             user_id: report.user_id,
             origin: report.origin,
             report_type: report.report_type,
             games: report.games,
             date_requested: BsonDateTime(Utc::now()),
             date_completed: None,
+            sent_to_irwin: false,
         }
     }
 }
 
-pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<Bson> {
+pub async fn insert_one_report(db: DbConn, report: CreateReport) -> Result<m::ReportId> {
     let reports_coll = m::Report::coll(db.clone());
     let report: m::Report = report.into();
-    Ok(reports_coll
-        .insert_one(to_document(&report)?, None)
+    reports_coll.insert_one(to_document(&report)?, None).await?;
+    Ok(report._id)
+}
+
+pub async fn atomically_update_sent_to_irwin(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
+    Ok(m::Report::coll(db)
+        .find_one_and_update(
+            doc! {"_id": {"$eq": id.0}, "sent_to_irwin": { "$eq": false }},
+            UpdateModifications::Document(doc! {"$set": { "sent_to_irwin": true }}),
+            None,
+        )
         .await?
-        .inserted_id)
+        .map(from_document)
+        .transpose()?)
+}
+
+pub async fn find_report(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
+    let reports_coll = m::Report::coll(db.clone());
+    Ok(reports_coll
+        .find_one(doc! {"_id": id.0}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
 }
 
 pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
@@ -126,7 +147,7 @@ where
 }
 
 pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {
-    let games_coll = db.database.collection("deepq_games");
+    let games_coll = m::Game::coll(db.clone());
     Ok(games_coll
         .find_one(doc! {"_id": game_id}, None)
         .await?
@@ -136,7 +157,7 @@ pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>
 
 #[derive(Debug, Clone)]
 pub struct UpdateGameAnalysis {
-    pub job_id: ObjectId,
+    pub job_id: JobId,
     pub game_id: m::GameId,
     pub source_id: m::UserId,
     pub analysis: Vec<Option<m::PlyAnalysis>>,
@@ -152,7 +173,7 @@ impl From<UpdateGameAnalysis> for m::GameAnalysis {
             job_id: g.job_id,
             game_id: g.game_id,
             source_id: g.source_id,
-            analysis: g.analysis,
+            analysis: g.analysis.clone(),
             requested_pvs: g.requested_pvs,
             requested_depth: g.requested_depth,
             requested_nodes: g.requested_nodes,
@@ -161,7 +182,8 @@ impl From<UpdateGameAnalysis> for m::GameAnalysis {
 }
 
 pub async fn upsert_one_game_analysis(
-    db: DbConn, analysis: UpdateGameAnalysis
+    db: DbConn,
+    analysis: UpdateGameAnalysis,
 ) -> Result<ObjectId> {
     let analysis_coll = m::GameAnalysis::coll(db.clone());
     let analysis: m::GameAnalysis = analysis.into();
@@ -174,4 +196,13 @@ pub async fn upsert_one_game_analysis(
         .await?;
     debug!("Result: {:?}", result);
     Ok(analysis._id)
+}
+
+pub async fn find_analysis_for_job(db: DbConn, job_id: JobId) -> Result<Option<m::GameAnalysis>> {
+    let analysis_coll = m::GameAnalysis::coll(db.clone());
+    Ok(analysis_coll
+        .find_one(doc! {"job_id": job_id.0}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
 }

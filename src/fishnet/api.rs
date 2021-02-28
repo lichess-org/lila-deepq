@@ -30,7 +30,7 @@ use rand::{thread_rng, Rng};
 use serde::Serialize;
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId};
+use crate::deepq::model::{GameId, UserId, ReportId};
 use crate::error::{Error, Result};
 use crate::fishnet::model as m;
 
@@ -62,8 +62,7 @@ impl From<CreateApiUser> for m::ApiUser {
 pub async fn create_api_user(db: DbConn, create: CreateApiUser) -> Result<m::ApiUser> {
     let col = m::ApiUser::coll(db);
     let api_user: m::ApiUser = create.into();
-    col
-        .insert_one(to_document(&api_user)?, None)
+    col.insert_one(to_document(&api_user)?, None)
         .await?
         .inserted_id
         .as_object_id()
@@ -83,6 +82,7 @@ pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>>
 #[derive(Debug, Clone)]
 pub struct CreateJob {
     pub game_id: GameId,
+    pub report_id: Option<ReportId>,
     pub analysis_type: m::AnalysisType,
     pub precedence: i32,
 }
@@ -90,12 +90,14 @@ pub struct CreateJob {
 impl From<CreateJob> for m::Job {
     fn from(job: CreateJob) -> m::Job {
         m::Job {
-            _id: ObjectId::new(),
+            _id: m::JobId(ObjectId::new()),
             game_id: job.game_id,
+            report_id: job.report_id,
             analysis_type: job.analysis_type,
             precedence: job.precedence,
             owner: None,
             date_last_updated: BsonDateTime(Utc::now()),
+            is_complete: false
         }
     }
 }
@@ -141,10 +143,10 @@ pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Jo
         .transpose()?)
 }
 
-pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: ObjectId) -> Result<()> {
+pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Result<()> {
     m::Job::coll(db)
         .update_one(
-            doc! { "_id": id, "owner": api_user.key.clone() },
+            doc! { "_id": id.0, "owner": api_user.key.clone() },
             UpdateModifications::Document(doc! {"owner": Bson::Null}),
             None,
         )
@@ -152,16 +154,44 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: ObjectId) -> Res
     Ok(())
 }
 
-pub async fn delete_job(db: DbConn, id: ObjectId) -> Result<()> {
+pub async fn game_id_for_job_id(db: DbConn, id: m::JobId) -> Result<Option<GameId>> {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id.0}, None)
+        .await?
+        .map(from_document)
+        .transpose()?
+        .map(|d: m::Job| d.game_id))
+}
+
+pub async fn set_complete(db: DbConn, id: m::JobId) -> Result<()> {
     m::Job::coll(db)
-        .delete_one(doc! { "_id": id }, None)
+        .update_one(
+            doc! {"_id": {"$eq": id.0}},
+            UpdateModifications::Document(doc! {"$set": { "is_complete": true }}),
+            None,
+        )
         .await?;
     Ok(())
 }
 
-pub async fn get_user_job(db: DbConn, id: ObjectId, user: m::ApiUser) -> Result<Option<m::Job>> {
+pub async fn delete_job(db: DbConn, id: m::JobId) -> Result<()> {
+    m::Job::coll(db)
+        .delete_one(doc! { "_id": id.0 }, None)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_user_job(db: DbConn, id: m::JobId, user: m::ApiUser) -> Result<Option<m::Job>> {
     Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id, "owner": user.key}, None)
+        .find_one(doc! {"_id": id.0, "owner": user.key}, None)
+        .await?
+        .map(from_document)
+        .transpose()?)
+}
+
+pub async fn get_job(db: DbConn, id: m::JobId) -> Result<Option<m::Job>> {
+    Ok(m::Job::coll(db)
+        .find_one(doc! {"_id": id.0}, None)
         .await?
         .map(from_document)
         .transpose()?)

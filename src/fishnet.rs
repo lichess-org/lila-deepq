@@ -19,3 +19,37 @@ pub mod api;
 pub mod filters;
 pub mod handlers;
 pub mod model;
+
+use crate::fishnet::model::JobId;
+use crate::db::DbConn;
+
+use tokio::sync::broadcast;
+use warp::{
+    filters::BoxedFilter,
+    reply::Reply,
+};
+
+#[derive(Debug, Clone)]
+pub enum FishnetMsg {
+    JobAcquired(JobId),
+    JobAborted(JobId),
+    JobCompleted(JobId),
+}
+
+
+pub struct Actor {
+    pub tx: broadcast::Sender<FishnetMsg>,
+}
+
+impl Actor {
+    pub fn new(channel_size: usize) -> Actor {
+        // TODO: make the amount of backlog configurable
+        let (tx, _) = broadcast::channel(channel_size);
+        Actor {tx}
+    }
+
+    pub fn handlers(&self, db: DbConn) -> BoxedFilter<(impl Reply,)> { 
+        handlers::mount(db.clone(), self.tx.clone())
+    }
+}
+

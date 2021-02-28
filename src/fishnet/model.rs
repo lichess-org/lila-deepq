@@ -14,9 +14,12 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
+use std::str::FromStr;
 
 use chrono::prelude::*;
 use derive_more::{Display, From};
+use futures::stream::{Stream, StreamExt};
+use log::warn;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, Bson, DateTime},
     options::FindOneOptions,
@@ -25,8 +28,8 @@ use mongodb::{
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId};
-use crate::error::Result;
+use crate::deepq::model::{GameId, Report, UserId, ReportId};
+use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct Key(pub String);
@@ -70,14 +73,33 @@ impl ApiUser {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
+pub struct JobId(pub ObjectId);
+
+impl From<JobId> for ObjectId {
+    fn from(ji: JobId) -> ObjectId {
+        ji.0
+    }
+}
+
+impl FromStr for JobId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(JobId(ObjectId::with_string(s)?))
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Job {
-    pub _id: ObjectId,
+    pub _id: JobId,
     pub game_id: GameId,
     pub analysis_type: AnalysisType,
     pub precedence: i32,
     pub owner: Option<String>, // TODO: this should be the key from the database
     pub date_last_updated: DateTime,
+    pub report_id: Option<ReportId>,
+    pub is_complete: bool, // Denormalized cache of completion state.
 }
 
 impl Job {
@@ -95,6 +117,36 @@ impl Job {
             "analysis_type": { "$eq": analysis_type },
         };
         Ok(Job::coll(db.clone()).count_documents(filter, None).await?)
+    }
+
+    pub async fn find_by_report(
+        db: DbConn,
+        report: Report,
+    ) -> Result<impl Stream<Item = Result<Job>>> {
+        let p = "Job::find_by_report >";
+        let filter = doc! {
+            "report_id": { "$eq": report._id.0.clone() }
+        };
+        Ok(Job::coll(db.clone())
+            .find(filter, None)
+            .await?
+            .filter_map(move |doc_result| async move {
+                match doc_result.is_ok() {
+                    false => {
+                        warn!(
+                            "{} error processing cursor of jobs: {:?}.",
+                            p,
+                            doc_result.expect_err("silly rabbit")
+                        );
+                        None
+                    },
+                    true => Some(doc_result.expect("silly rabbit"))
+                }
+            })
+            .map(from_document::<Job>)
+            .map(|i| i.map_err(|e| e.into()))
+            .boxed()
+        )
     }
 
     pub async fn queued_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {

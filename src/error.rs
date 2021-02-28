@@ -26,6 +26,7 @@ use mongodb::error::Error as _MongoDBError;
 //use serde::de::{Error as _SerdeDeError};
 
 use warp::reject;
+use tokio::task::JoinError;
 
 use thiserror::Error;
 
@@ -53,6 +54,9 @@ pub enum Error {
     // SerdeDeserializationError(#[from] _SerdeDeError),
     #[error("I am somehow unable to create a record in the database.")]
     CreateError,
+
+    #[error("I am somehow unable to find a record in the database.")]
+    NotFoundError,
 
     #[error("BSON Error")]
     BsonSerializationError(#[from] _BsonSeError),
@@ -100,6 +104,9 @@ pub enum Error {
 
     #[error("I haven't implemented this yet")]
     Unimplemented,
+
+    #[error("Unable to join tokio task")]
+    JoinError(#[from] JoinError),
 }
 
 impl reject::Reject for Error {}

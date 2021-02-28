@@ -64,7 +64,6 @@ impl From<DatabaseOpts> for db::ConnectionOpts {
             mongo_database: db_opts.mongo_database,
         }
     }
-
 }
 
 #[derive(Debug, StructOpt)]
@@ -84,8 +83,16 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     info!("Connecting to database...");
     let conn = db::connection(&args.database_opts.clone().into()).await?;
 
+    // TODO: should probably make the 16 configurable.
+    info!("Starting Fishnet Actor...");
+    let fishnet = fishnet::Actor::new(16);
     info!("Mounting urls...");
-    let app = fishnet::handlers::mount(conn.clone());
+    let app = fishnet.handlers(conn.clone());
+
+    let fishnet_listener = tokio::spawn(async move {
+        info!("Starting Irwin Actor...");
+        irwin::api::fishnet_listener(conn.clone(), fishnet.tx.clone()).await;
+    });
 
     info!("Starting server...");
     let address: SocketAddr =
@@ -93,6 +100,8 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     warp::serve(warp::path("fishnet").and(app))
         .run(address)
         .await;
+
+    fishnet_listener.await?;
 
     Ok(())
 }
@@ -123,20 +132,20 @@ async fn deepq_irwin_job_listener(
     info!("Starting up...");
     loop {
         info!("Connecting...");
-        let mut stream = irwin::stream(&args.api_url, &args.lichess_api_key).await?;
+        let mut stream = irwin::stream::listener(&args.api_url, &args.lichess_api_key).await?;
 
         info!("Reading stream...");
         while let Some(msg) = stream.next().await {
             match msg {
-                Ok(irwin::StreamMsg::KeepAlive(_)) => info!("keepAlive received"),
-                Ok(irwin::StreamMsg::Request(request)) => {
+                Ok(irwin::stream::Msg::KeepAlive(_)) => info!("keepAlive received"),
+                Ok(irwin::stream::Msg::Request(request)) => {
                     info!(
                         "{:?} report: {} for {} games",
                         request.origin,
                         request.user.id.0,
                         request.games.len()
                     );
-                    irwin::add_to_queue(conn.clone(), request).await?;
+                    irwin::api::add_to_queue(conn.clone(), request).await?;
                 }
                 Err(e) => error!("Error parsing message from lichess:\n{:?}", e),
             }
@@ -199,7 +208,7 @@ async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::e
 async fn main() -> StdResult<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
 
-    debug!("Reading ...");
+    debug!("Reading dotenv...");
     dotenv().ok();
 
     let command = Command::from_args();
