@@ -206,13 +206,13 @@ struct IrwinJob {
     analyzed_positions: Vec<AnalyzedPosition>,
 }
 
-fn irwin_job_from_report(db: DbConn, report: Report) -> IrwinJob {
-    let jobs = fishnet::model::Job::find_by_report(db.clone()
+async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
+    let jobs = FishnetJob::find_by_report(db.clone(), report.clone()).await?;
     let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
     let games: Vec<IrwinGame> = Vec::new();
     for game in &report.games {
         games.push(game.clone().into());
-        
+
     }
 
     IrwinJob {
