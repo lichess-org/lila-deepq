@@ -66,6 +66,24 @@ impl From<DatabaseOpts> for db::ConnectionOpts {
     }
 }
 
+#[derive(Debug, StructOpt, Clone)]
+struct IrwinOpts {
+    #[structopt(long, env = "LILA_DEEPQ_IRWIN_URI")]
+    irwin_uri: String,
+
+    #[structopt(long, env = "LILA_DEEPQ_IRWIN_API_KEY")]
+    irwin_api_key: String,
+}
+
+impl From<IrwinOpts> for irwin::api::IrwinOpts {
+    fn from(irwin_opts: IrwinOpts) -> irwin::api::IrwinOpts {
+        irwin::api::IrwinOpts {
+            uri: irwin_opts.irwin_uri,
+            api_key: irwin::api::Key(irwin_opts.irwin_api_key),
+        }
+    }
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Runs the main lila-deepq webserver.")]
 struct DeepQWebserver {
@@ -77,6 +95,9 @@ struct DeepQWebserver {
 
     #[structopt(flatten)]
     database_opts: DatabaseOpts,
+
+    #[structopt(flatten)]
+    irwin_opts: IrwinOpts,
 }
 
 async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::Error>> {
@@ -89,9 +110,10 @@ async fn deepq_web(args: &DeepQWebserver) -> StdResult<(), Box<dyn std::error::E
     info!("Mounting urls...");
     let app = fishnet.handlers(conn.clone());
 
+    let irwin_opts = args.irwin_opts.clone();
     let fishnet_listener = tokio::spawn(async move {
         info!("Starting Irwin Actor...");
-        irwin::api::fishnet_listener(conn.clone(), fishnet.tx.clone()).await;
+        irwin::api::fishnet_listener(conn.clone(), irwin_opts.into(), fishnet.tx.clone()).await;
     });
 
     info!("Starting server...");

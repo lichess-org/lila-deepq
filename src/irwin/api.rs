@@ -21,6 +21,7 @@ use std::convert::{TryFrom, TryInto};
 use std::iter::Iterator;
 use std::result::Result as StdResult;
 
+use derive_more::{Display, From};
 use futures::{future::try_join_all, stream::StreamExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,7 @@ use crate::deepq::api::{
 use crate::deepq::model::{GameId, Report, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
-use crate::fishnet::model::{AnalysisType, Job, JobId};
+use crate::fishnet::model::{AnalysisType, Job as FishnetJob, JobId};
 use crate::fishnet::FishnetMsg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -47,9 +48,11 @@ pub struct User {
     pub games: i32,
 }
 
+// This game is the incoming irwin report from lichess, not the
+// format that irwin uses internally.  For that see below
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Game {
+pub struct RequestGame {
     pub id: GameId,
     pub white: UserId,
     pub black: UserId,
@@ -72,10 +75,10 @@ fn uci_from_san(pgn: &Vec<San>) -> Result<Vec<Uci>> {
     Ok(ret_val)
 }
 
-impl TryFrom<&Game> for CreateGame {
+impl TryFrom<&RequestGame> for CreateGame {
     type Error = Error;
 
-    fn try_from(g: &Game) -> StdResult<CreateGame, Self::Error> {
+    fn try_from(g: &RequestGame) -> StdResult<CreateGame, Self::Error> {
         let g = g.clone();
         Ok(CreateGame {
             game_id: g.id,
@@ -93,7 +96,7 @@ pub struct Request {
     pub t: String,
     pub origin: ReportOrigin,
     pub user: User,
-    pub games: Vec<Game>,
+    pub games: Vec<RequestGame>,
 }
 
 impl From<Request> for CreateReport {
@@ -151,17 +154,86 @@ pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
     Ok(())
 }
 
-async fn handle_job_acquired(_db: DbConn, job_id: JobId) {
+#[derive(Serialize, Debug, Clone, From, Display)]
+pub struct Key(pub String);
+
+#[derive(Debug, Clone)]
+pub struct IrwinOpts {
+    pub uri: String,
+    pub api_key: Key,
+}
+
+// This is a custom set of structs to represent the job we're submitting to irwin.
+//
+// I am not re-using the pre-existing structs from fishnet, because I don't want
+// to couple them.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct EngineEval {
+    // TODO: Don't know if this is large enough or too large
+    cp: Option<u32>,
+    mate: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Analysis {
+    uci: String,
+    #[serde(rename = "engineEval")]
+    engine_eval: EngineEval,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct AnalyzedPosition {
+    id: String, // The zobrist hash
+    analyses: Vec<Analysis>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct IrwinGame {
+    id: String,
+    white: String,
+    black: String,
+    pgn: Vec<String>,
+    emt: Option<Vec<u32>>,
+    analysis: Option<Vec<EngineEval>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct IrwinJob {
+    #[serde(rename = "playerId")]
+    player_id: String, // The zobrist hash
+    games: Vec<IrwinGame>,
+    #[serde(rename = "analyzedPositions")]
+    analyzed_positions: Vec<AnalyzedPosition>,
+}
+
+fn irwin_job_from_report(db: DbConn, report: Report) -> IrwinJob {
+    let jobs = fishnet::model::Job::find_by_report(db.clone()
+    let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
+    let games: Vec<IrwinGame> = Vec::new();
+    for game in &report.games {
+        games.push(game.clone().into());
+        
+    }
+
+    IrwinJob {
+        player_id: report.user_id.0,
+        games: request.games.iter().map(|g| g.into()).collect(),
+        analyzed_positions: analyzed_positions,
+    }
+}
+
+
+async fn handle_job_acquired(_db: DbConn, _opts: IrwinOpts, job_id: JobId) {
     let p = "handle_job_acquired >";
     debug!("{} Fishnet::JobAcquired({})", p, job_id);
 }
 
-async fn handle_job_aborted(_db: DbConn, job_id: JobId) {
+async fn handle_job_aborted(_db: DbConn, _opts: IrwinOpts, job_id: JobId) {
     let p = "handle_job_aborted >";
     debug!("{} Fishnet::JobAborted({})", p, job_id);
 }
 
-async fn handle_job_completed(db: DbConn, job_id: JobId) {
+async fn handle_job_completed(db: DbConn, opts: IrwinOpts, job_id: JobId) {
     let p = "handle_job_completed >";
     match get_job(db.clone(), job_id.clone().into()).await {
         Err(err) => {
@@ -191,7 +263,7 @@ async fn handle_job_completed(db: DbConn, job_id: JobId) {
                     }
                     Ok(Some(report)) => {
                         debug!("{} Fishnet::JobCompleted({}) > handled", p, job_id);
-                        match update_report_completeness(db.clone(), report).await {
+                        match update_report_completeness(db.clone(), opts.clone(), report).await {
                             Ok(_) => {}
                             Err(err) => {
                                 error!(
@@ -211,7 +283,7 @@ async fn handle_job_completed(db: DbConn, job_id: JobId) {
 
 async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
     let p = "report_complete_percentage >";
-    let mut jobs = Job::find_by_report(db.clone(), report.clone()).await?;
+    let mut jobs = FishnetJob::find_by_report(db.clone(), report.clone()).await?;
     let mut complete = 0f64;
     let mut incomplete = 0f64;
 
@@ -237,7 +309,7 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
     Ok(complete / (complete + incomplete))
 }
 
-async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
+async fn update_report_completeness(db: DbConn, opts: IrwinOpts, report: Report) -> Result<()> {
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
@@ -247,6 +319,9 @@ async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
                 "{} > Report({:?}) > complete. Submitting to irwin!",
                 &p, updated_report._id
             );
+
+            let irwin_job: IrwinJob = report.into();
+
         } else {
             info!(
                 "{} > Report({:?}) > complete. Already submitted to irwin!",
@@ -264,7 +339,7 @@ async fn update_report_completeness(db: DbConn, report: Report) -> Result<()> {
     Ok(())
 }
 
-pub async fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) {
+pub async fn fishnet_listener(db: DbConn, opts: IrwinOpts, tx: broadcast::Sender<FishnetMsg>) {
     let p = "fishnet_listener >";
     let mut should_stop: bool = false;
     let mut rx = tx.subscribe();
@@ -274,11 +349,11 @@ pub async fn fishnet_listener(db: DbConn, tx: broadcast::Sender<FishnetMsg>) {
         debug!("Received message: {:?}", msg);
         if let Ok(msg) = msg {
             if let FishnetMsg::JobAcquired(id) = msg {
-                handle_job_acquired(db.clone(), id.clone()).await;
+                handle_job_acquired(db.clone(), opts.clone(), id.clone()).await;
             } else if let FishnetMsg::JobAborted(id) = msg {
-                handle_job_aborted(db.clone(), id.clone()).await;
+                handle_job_aborted(db.clone(), opts.clone(), id.clone()).await;
             } else if let FishnetMsg::JobCompleted(id) = msg {
-                handle_job_completed(db.clone(), id.clone()).await;
+                handle_job_completed(db.clone(), opts.clone(), id.clone()).await;
             }
         } else if let Err(e) = msg {
             match e {
