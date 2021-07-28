@@ -76,7 +76,7 @@ impl FromStr for Id {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Id(ObjectId::with_string(s)?))
+        Ok(Id(ObjectId::parse_str(s)?))
     }
 }
 

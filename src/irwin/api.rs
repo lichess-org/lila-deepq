@@ -34,7 +34,7 @@ use crate::deepq::api::{
     atomically_update_sent_to_irwin, find_report, insert_many_games, insert_one_report,
     precedence_for_origin, CreateGame, CreateReport,
 };
-use crate::deepq::model::{GameId, Report, ReportOrigin, ReportType, Score, UserId};
+use crate::deepq::model::{GameAnalysis, GameId, Game, Report, ReportOrigin, ReportType, Score, UserId};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
 use crate::fishnet::model::{AnalysisType, Job as FishnetJob, JobId};
@@ -193,8 +193,22 @@ struct IrwinGame {
     white: String,
     black: String,
     pgn: Vec<String>,
-    emt: Option<Vec<u32>>,
+    emt: Option<Vec<i32>>,
     analysis: Option<Vec<EngineEval>>,
+}
+
+impl From<&Game> for IrwinGame {
+    fn from(game: &Game) -> IrwinGame {
+        let game = game.clone();
+        IrwinGame {
+            id: game._id.0,
+            white: game.white.map(|p| p.0).unwrap_or("Unknown (white)".into()),
+            black: game.black.map(|p| p.0).unwrap_or("Unknown (white)".into()),
+            pgn: game.pgn.iter().map(|uci| uci.to_string()).collect(),
+            emt: Some(game.emts),
+            analysis: None
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -206,22 +220,42 @@ struct IrwinJob {
     analyzed_positions: Vec<AnalyzedPosition>,
 }
 
-async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
-    let jobs = FishnetJob::find_by_report(db.clone(), report.clone()).await?;
-    let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
-    let games: Vec<IrwinGame> = Vec::new();
-    for game in &report.games {
-        games.push(game.clone().into());
-
-    }
-
-    IrwinJob {
-        player_id: report.user_id.0,
-        games: request.games.iter().map(|g| g.into()).collect(),
-        analyzed_positions: analyzed_positions,
+async fn ok_or_warn<S>(r: Result<S>) -> Option<S> {
+    match r {
+        Err(e) => {
+            warn!("Error parsing stream element: {:?}", e);
+            None
+        }
+        Ok(s) => Some(s),
     }
 }
 
+async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
+    let p = "irwin_job_from_report >";
+    let jobs: Vec<FishnetJob> = FishnetJob::find_by_report(db.clone(), report._id.clone())
+        .await?
+        .filter_map(ok_or_warn)
+        .collect()
+        .await;
+    let analysis: Vec<GameAnalysis> =
+        GameAnalysis::find_by_jobs(db.clone(), jobs.iter().map(|j| j._id.clone()).collect())
+            .await?
+            .filter_map(ok_or_warn)
+            .collect()
+            .await;
+    let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
+    // TODO: need to properly include analyzed positions here.
+    let mut games: Vec<Option<Game>> = Vec::new();
+    for id in &report.games {
+        games.push(Game::by_id(db.clone(), id.clone()).await?);
+    }
+
+    Ok(IrwinJob {
+        player_id: report.user_id.0,
+        games: games.iter().flatten().map(|g| g.into()).collect(),
+        analyzed_positions: analyzed_positions,
+    })
+}
 
 async fn handle_job_acquired(_db: DbConn, _opts: IrwinOpts, job_id: JobId) {
     let p = "handle_job_acquired >";
@@ -283,7 +317,7 @@ async fn handle_job_completed(db: DbConn, opts: IrwinOpts, job_id: JobId) {
 
 async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
     let p = "report_complete_percentage >";
-    let mut jobs = FishnetJob::find_by_report(db.clone(), report.clone()).await?;
+    let mut jobs = FishnetJob::find_by_report(db.clone(), report._id.clone()).await?;
     let mut complete = 0f64;
     let mut incomplete = 0f64;
 
@@ -313,15 +347,15 @@ async fn update_report_completeness(db: DbConn, opts: IrwinOpts, report: Report)
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
-        let updated_report = atomically_update_sent_to_irwin(db, report._id.clone()).await?;
+        let updated_report = atomically_update_sent_to_irwin(db.clone(), report._id.clone()).await?;
         if let Some(updated_report) = updated_report {
             info!(
                 "{} > Report({:?}) > complete. Submitting to irwin!",
                 &p, updated_report._id
             );
 
-            let irwin_job: IrwinJob = report.into();
-
+            let irwin_job: IrwinJob = irwin_job_from_report(db.clone(), report).await?;
+            // TODO: do something with this job?
         } else {
             info!(
                 "{} > Report({:?}) > complete. Already submitted to irwin!",

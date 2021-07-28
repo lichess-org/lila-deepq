@@ -21,14 +21,14 @@ use derive_more::{Display, From};
 use futures::stream::{Stream, StreamExt};
 use log::warn;
 use mongodb::{
-    bson::{doc, from_document, oid::ObjectId, Bson, DateTime},
+    bson::{doc, from_document, oid::ObjectId, Bson, DateTime, Document},
     options::FindOneOptions,
     Collection,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::db::DbConn;
-use crate::deepq::model::{GameId, Report, UserId, ReportId};
+use crate::deepq::model::{GameId, UserId, ReportId};
 use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
@@ -68,7 +68,7 @@ pub struct ApiUser {
 }
 
 impl ApiUser {
-    pub fn coll(db: DbConn) -> Collection {
+    pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_apiuser")
     }
 }
@@ -86,7 +86,7 @@ impl FromStr for JobId {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        Ok(JobId(ObjectId::with_string(s)?))
+        Ok(JobId(ObjectId::parse_str(s)?))
     }
 }
 
@@ -103,15 +103,15 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn coll(db: DbConn) -> Collection {
+    pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_fishnetjobs")
     }
 
     pub fn seconds_since_created(&self) -> i64 {
-        Utc::now().timestamp() - self.date_last_updated.timestamp()
+        (Utc::now().timestamp_millis() - self.date_last_updated.timestamp_millis())/1000_i64
     }
 
-    pub async fn acquired_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {
+    pub async fn acquired_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<u64> {
         let filter = doc! {
             "owner": { "$ne": Bson::Null },
             "analysis_type": { "$eq": analysis_type },
@@ -121,11 +121,11 @@ impl Job {
 
     pub async fn find_by_report(
         db: DbConn,
-        report: Report,
+        report_id: ReportId,
     ) -> Result<impl Stream<Item = Result<Job>>> {
         let p = "Job::find_by_report >";
         let filter = doc! {
-            "report_id": { "$eq": report._id.0.clone() }
+            "report_id": { "$eq": report_id.0.clone() }
         };
         Ok(Job::coll(db.clone())
             .find(filter, None)
@@ -149,7 +149,7 @@ impl Job {
         )
     }
 
-    pub async fn queued_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<i64> {
+    pub async fn queued_jobs(db: DbConn, analysis_type: AnalysisType) -> Result<u64> {
         let filter = doc! {
             "owner": { "$eq": Bson::Null },
             "analysis_type": { "$eq": analysis_type },

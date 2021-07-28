@@ -15,14 +15,15 @@ derive_more = "0.99.11"
 dotenv = "0.15.0"
 futures = "0.3.8"
 log = "0.4"
-mongodb = "2.0.0-alpha"
+bson = { version = "2.0.0-beta.2", features = ["chrono-0_4"] }
+mongodb = "2.0.0-beta.2"
 pretty_env_logger = "0.3"
 rand = { version = "0.8", features = ["getrandom"] }
 redis-async = "0.8"
 reqwest = { version = "0.11", features = ["json", "stream"] }
 serde = "1.0"
 serde_json = "1.0.60"
-shakmaty = "0.17.0"
+shakmaty = "0.19.0"
 structopt = "0.3"
 strum = "0.20"
 strum_macros = "0.20"

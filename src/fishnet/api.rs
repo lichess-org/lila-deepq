@@ -22,7 +22,7 @@ use std::convert::TryInto;
 use std::iter;
 
 use mongodb::bson::{
-    doc, from_document, oid::ObjectId, to_document, Bson, DateTime as BsonDateTime,
+    doc, from_document, oid::ObjectId, to_document, Bson,
 };
 use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
 use rand::distributions::Alphanumeric;
@@ -96,7 +96,7 @@ impl From<CreateJob> for m::Job {
             analysis_type: job.analysis_type,
             precedence: job.precedence,
             owner: None,
-            date_last_updated: BsonDateTime(Utc::now()),
+            date_last_updated: Utc::now().into(),
             is_complete: false
         }
     }
@@ -206,11 +206,9 @@ pub struct QStatus {
 
 pub async fn q_status(db: DbConn, analysis_type: m::AnalysisType) -> Result<QStatus> {
     let acquired = m::Job::acquired_jobs(db.clone(), analysis_type.clone())
-        .await?
-        .try_into()?;
+        .await?;
     let queued = m::Job::queued_jobs(db.clone(), analysis_type.clone())
-        .await?
-        .try_into()?;
+        .await?;
     let oldest = m::Job::oldest_job(db.clone(), analysis_type.clone())
         .await?
         .map(|job| job.seconds_since_created())

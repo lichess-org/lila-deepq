@@ -17,7 +17,9 @@
 use std::str::FromStr;
 
 use derive_more::{Display, From};
-use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime};
+use futures::stream::{Stream, StreamExt};
+use log::warn;
+use mongodb::bson::{doc, from_document, oid::ObjectId, Bson, DateTime, Document};
 use mongodb::Collection;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, SpaceSeparator, StringWithSeparator};
@@ -88,7 +90,7 @@ impl FromStr for ReportId {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        Ok(ReportId(ObjectId::with_string(s)?))
+        Ok(ReportId(ObjectId::parse_str(s)?))
     }
 }
 
@@ -105,7 +107,7 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn coll(db: DbConn) -> Collection {
+    pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_reports")
     }
 }
@@ -182,8 +184,21 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn coll(db: DbConn) -> Collection {
+    pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_games")
+    }
+
+    pub async fn by_id(
+        db: DbConn,
+        game_id: GameId,
+    ) -> Result<Option<Game>> {
+        let p = "Game::by_id >";
+        let filter = doc! { "_id": { "$eq": game_id.0 } };
+        Ok(GameAnalysis::coll(db.clone())
+            .find_one(filter, None)
+            .await?
+            .map(from_document)
+            .transpose()?)
     }
 }
 
@@ -206,10 +221,39 @@ pub struct GameAnalysis {
 }
 
 impl GameAnalysis {
-    pub fn coll(db: DbConn) -> Collection {
+    pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_analysis")
     }
     pub fn is_analysis_complete(&self) -> bool {
         self.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
+    }
+
+    pub async fn find_by_jobs(
+        db: DbConn,
+        job_ids: Vec<JobId>,
+    ) -> Result<impl Stream<Item = Result<GameAnalysis>>> {
+        let p = "GameAnalysis::find_by_jobs >";
+        let filter = doc! {
+            "job_id": { "$in": job_ids.iter().map(|ji| ji.0).collect::<Vec<ObjectId>>() }
+        };
+        Ok(GameAnalysis::coll(db.clone())
+            .find(filter, None)
+            .await?
+            .filter_map(move |doc_result| async move {
+                match doc_result.is_ok() {
+                    false => {
+                        warn!(
+                            "{} error processing cursor of jobs: {:?}.",
+                            p,
+                            doc_result.expect_err("silly rabbit")
+                        );
+                        None
+                    }
+                    true => Some(doc_result.expect("silly rabbit")),
+                }
+            })
+            .map(from_document::<GameAnalysis>)
+            .map(|i| i.map_err(|e| e.into()))
+            .boxed())
     }
 }

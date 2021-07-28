@@ -19,7 +19,7 @@ use chrono::prelude::*;
 use futures::future::Future;
 use log::debug;
 use mongodb::{
-    bson::{doc, from_document, oid::ObjectId, to_document, DateTime as BsonDateTime},
+    bson::{doc, from_document, oid::ObjectId, to_document},
     options::{UpdateModifications, UpdateOptions},
 };
 use shakmaty::{fen::Fen, uci::Uci};
@@ -45,7 +45,7 @@ impl From<CreateReport> for m::Report {
             origin: report.origin,
             report_type: report.report_type,
             games: report.games,
-            date_requested: BsonDateTime(Utc::now()),
+            date_requested: Utc::now().into(),
             date_completed: None,
             sent_to_irwin: false,
         }
