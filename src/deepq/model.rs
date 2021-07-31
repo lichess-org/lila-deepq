@@ -192,7 +192,6 @@ impl Game {
         db: DbConn,
         game_id: GameId,
     ) -> Result<Option<Game>> {
-        let p = "Game::by_id >";
         let filter = doc! { "_id": { "$eq": game_id.0 } };
         Ok(GameAnalysis::coll(db.clone())
             .find_one(filter, None)
