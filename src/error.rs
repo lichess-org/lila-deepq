@@ -24,9 +24,11 @@ use mongodb::bson::{
 };
 use mongodb::error::Error as _MongoDBError;
 //use serde::de::{Error as _SerdeDeError};
+use shakmaty::uci::IllegalUciError;
+use shakmaty::{Chess, PlayError};
 
-use warp::reject;
 use tokio::task::JoinError;
+use warp::reject;
 
 use thiserror::Error;
 
@@ -107,6 +109,15 @@ pub enum Error {
 
     #[error("Unable to join tokio task")]
     JoinError(#[from] JoinError),
+
+    #[error("Illegal UCI for a given position")]
+    IllegalUciError(#[from] IllegalUciError),
+
+    #[error("Illegal ChessMove for a given position")]
+    IllegalChessMove(#[from] PlayError<Chess>),
+
+    #[error("Irwin analysis has specific requirements")]
+    IncompleteIrwinAnalysis,
 }
 
 impl reject::Reject for Error {}

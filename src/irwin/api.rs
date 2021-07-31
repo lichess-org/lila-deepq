@@ -34,7 +34,9 @@ use crate::deepq::api::{
     atomically_update_sent_to_irwin, find_report, insert_many_games, insert_one_report,
     precedence_for_origin, CreateGame, CreateReport,
 };
-use crate::deepq::model::{GameAnalysis, GameId, Game, Report, ReportOrigin, ReportType, Score, UserId};
+use crate::deepq::model::{
+    Game, GameAnalysis, GameId, PlyAnalysis, Report, ReportOrigin, ReportType, Score, UserId,
+};
 use crate::error::{Error, Result};
 use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
 use crate::fishnet::model::{AnalysisType, Job as FishnetJob, JobId};
@@ -174,11 +176,54 @@ struct EngineEval {
     mate: Option<u32>,
 }
 
+impl From<Score> for EngineEval {
+    fn from(s: Score) -> EngineEval {
+        match s {
+            Score::Cp(cp) => EngineEval {
+                cp: Some(cp as u32),
+                mate: None,
+            },
+            Score::Mate(m) => EngineEval {
+                cp: None,
+                mate: Some(m as u32),
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Analysis {
     uci: String,
     #[serde(rename = "engineEval")]
     engine_eval: EngineEval,
+}
+
+impl Analysis {
+    fn from_ply_analysis(uci: &Uci, ply_analysis: &PlyAnalysis) -> Result<Analysis> {
+        match ply_analysis {
+            PlyAnalysis::Best(m) => Ok(Analysis {
+                uci: uci.to_string(),
+                engine_eval: m.score.clone().into(),
+            }),
+            PlyAnalysis::Matrix(m) => {
+                match m
+                    .score
+                    .iter()
+                    .filter(|d| d.iter().flatten().count() > 0)
+                    .last()
+                    .map(|pvs| pvs.iter().flatten().last())
+                    .flatten()
+                {
+                    Some(s) => Ok(Analysis {
+                        uci: uci.to_string(),
+                        engine_eval: s.clone().into(),
+                    }),
+                    None => Err(Error::IncompleteIrwinAnalysis),
+                }
+            }
+            _ => Err(Error::IncompleteIrwinAnalysis),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -197,8 +242,8 @@ struct IrwinGame {
     analysis: Option<Vec<EngineEval>>,
 }
 
-impl From<&Game> for IrwinGame {
-    fn from(game: &Game) -> IrwinGame {
+impl From<Game> for IrwinGame {
+    fn from(game: Game) -> IrwinGame {
         let game = game.clone();
         IrwinGame {
             id: game._id.0,
@@ -206,7 +251,7 @@ impl From<&Game> for IrwinGame {
             black: game.black.map(|p| p.0).unwrap_or("Unknown (white)".into()),
             pgn: game.pgn.iter().map(|uci| uci.to_string()).collect(),
             emt: Some(game.emts),
-            analysis: None
+            analysis: None,
         }
     }
 }
@@ -237,22 +282,62 @@ async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
         .filter_map(ok_or_warn)
         .collect()
         .await;
-    let analysis: Vec<GameAnalysis> =
+    debug!("{} got fishnet job", p);
+    // TODO: Theoretically we might have more than one analysis
+    //       per game from the way the database structure is setup.
+    //       I believe that the code is organized in such a way that
+    //       this will not be possible _right_ now, but something to
+    //       keep in mind.
+    let analyzed_games: Vec<GameAnalysis> =
         GameAnalysis::find_by_jobs(db.clone(), jobs.iter().map(|j| j._id.clone()).collect())
             .await?
             .filter_map(ok_or_warn)
             .collect()
             .await;
+    debug!("{} got analysis", p);
+    let mut games: Vec<IrwinGame> = Vec::new();
     let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
-    // TODO: need to properly include analyzed positions here.
-    let mut games: Vec<Option<Game>> = Vec::new();
-    for id in &report.games {
-        games.push(Game::by_id(db.clone(), id.clone()).await?);
+    for game_analysis in analyzed_games {
+        let game = game_analysis.game(db.clone()).await?;
+
+        let mut pos = Chess::default();
+        match game {
+            None => debug!(
+                "{} skipping game id {} because we can't find it in the database",
+                p, game_analysis.game_id
+            ),
+            Some(game) => {
+                let mut irwin_game: IrwinGame = game.clone().into();
+                let mut irwin_evals: Vec<EngineEval> = Vec::new();
+
+                for (uci, analysis) in game.pgn.iter().zip(game_analysis.analysis.iter()) {
+                    match analysis {
+                        Some(analysis) => {
+                            irwin_evals
+                                .push(Analysis::from_ply_analysis(uci, &analysis)?.engine_eval);
+                            let m = uci.to_move(&pos.clone())?;
+                            pos = pos.play(&m)?;
+                        }
+                        // TODO: Waiting on zobrist hashes from shakmaty
+                        // https://github.com/niklasf/shakmaty/issues/40
+                        // and https://github.com/niklasf/shakmaty/pull/45
+                        None => {
+                            return Err(Error::IncompleteIrwinAnalysis)?;
+                        }
+                    }
+                }
+                irwin_game.analysis = Some(irwin_evals);
+                games.push(irwin_game);
+            }
+        }
     }
 
+    debug!("{} got games", p);
+
+    debug!("{} returning irwin job", p);
     Ok(IrwinJob {
         player_id: report.user_id.0,
-        games: games.iter().flatten().map(|g| g.into()).collect(),
+        games: games,
         analyzed_positions: analyzed_positions,
     })
 }
@@ -347,7 +432,8 @@ async fn update_report_completeness(db: DbConn, opts: IrwinOpts, report: Report)
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
-        let updated_report = atomically_update_sent_to_irwin(db.clone(), report._id.clone()).await?;
+        let updated_report =
+            atomically_update_sent_to_irwin(db.clone(), report._id.clone()).await?;
         if let Some(updated_report) = updated_report {
             info!(
                 "{} > Report({:?}) > complete. Submitting to irwin!",

@@ -223,8 +223,13 @@ impl GameAnalysis {
     pub fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_analysis")
     }
+
     pub fn is_analysis_complete(&self) -> bool {
         self.analysis.iter().filter(|o| o.is_none()).count() == 0_usize
+    }
+
+    pub async fn game(&self, db: DbConn) -> Result<Option<Game>> {
+        Game::by_id(db, self.game_id.clone()).await
     }
 
     pub async fn find_by_jobs(
