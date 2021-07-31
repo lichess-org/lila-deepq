@@ -129,8 +129,8 @@ pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<m::GameId> 
     let games_coll = m::Game::coll(db.clone());
     let result = games_coll
         .update_one(
-            doc! { "_id": game._id.clone() },
-            to_document(&game)?,
+            doc! { "_id": { "$eq": game._id.clone() } },
+            doc! { "$set":  to_document(&game)? },
             Some(UpdateOptions::builder().upsert(true).build()),
         )
         .await?;
