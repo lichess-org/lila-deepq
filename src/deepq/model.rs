@@ -128,25 +128,25 @@ pub enum Score {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SkippedAnalysis {
-    skipped: bool,
+    pub skipped: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EmptyAnalysis {
-    depth: i32,
-    score: Score,
+    pub depth: i32,
+    pub score: Score,
 }
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BestMove {
     #[serde_as(as = "StringWithSeparator::<SpaceSeparator, Uci>")]
-    pv: Vec<Uci>,
-    depth: i32,
-    score: Score,
-    time: i64,
-    nodes: i64,
-    nps: Option<i64>,
+    pub pv: Vec<Uci>,
+    pub depth: i32,
+    pub score: Score,
+    pub time: i64,
+    pub nodes: i64,
+    pub nps: Option<i64>,
 }
 
 #[serde_as]
