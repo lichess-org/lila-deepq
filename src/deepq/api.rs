@@ -24,7 +24,7 @@ use mongodb::{
 };
 use shakmaty::{fen::Fen, uci::Uci};
 
-use crate::db::DbConn;
+use crate::db::{DbConn, Queryable};
 use crate::deepq::model as m;
 use crate::error::Result;
 use crate::fishnet::model::JobId;
@@ -172,7 +172,7 @@ pub struct UpdateGameAnalysis {
 impl From<UpdateGameAnalysis> for m::GameAnalysis {
     fn from(g: UpdateGameAnalysis) -> m::GameAnalysis {
         m::GameAnalysis {
-            _id: ObjectId::new(),
+            _id: m::GameAnalysisId(ObjectId::new()),
             job_id: g.job_id,
             game_id: g.game_id,
             source_id: g.source_id,
@@ -187,12 +187,12 @@ impl From<UpdateGameAnalysis> for m::GameAnalysis {
 pub async fn upsert_one_game_analysis(
     db: DbConn,
     analysis: UpdateGameAnalysis,
-) -> Result<ObjectId> {
+) -> Result<m::GameAnalysisId> {
     let analysis_coll = m::GameAnalysis::coll(db.clone());
     let analysis: m::GameAnalysis = analysis.into();
     let result = analysis_coll
         .update_one(
-            doc! { "_id": analysis._id.clone() },
+            doc! { "_id": analysis._id.clone().0 },
             to_document(&analysis)?,
             Some(UpdateOptions::builder().upsert(true).build()),
         )

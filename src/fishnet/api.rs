@@ -16,58 +16,22 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 //
 //
-use chrono::prelude::*;
 use futures::future::Future;
 use std::convert::TryInto;
-use std::iter;
 
 use mongodb::bson::{
-    doc, from_document, oid::ObjectId, to_document, Bson,
+    doc, from_document, Bson,
 };
 use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
 use serde::Serialize;
 
-use crate::db::DbConn;
-use crate::deepq::model::{GameId, UserId, ReportId};
-use crate::error::{Error, Result};
+use crate::db::{ DbConn, Queryable };
+use crate::deepq::model::GameId;
+use crate::error::Result;
 use crate::fishnet::model as m;
 
-#[derive(Debug, Clone)]
-pub struct CreateApiUser {
-    pub user: Option<UserId>,
-    pub name: String,
-    pub perms: Vec<m::AnalysisType>,
-}
-
-impl From<CreateApiUser> for m::ApiUser {
-    fn from(job: CreateApiUser) -> m::ApiUser {
-        let mut rng = thread_rng();
-        let key: String = iter::repeat(())
-            .map(|()| rng.sample(Alphanumeric))
-            .map(char::from)
-            .take(7)
-            .collect();
-        m::ApiUser {
-            _id: ObjectId::new(),
-            key: key.into(),
-            user: job.user,
-            name: job.name,
-            perms: job.perms,
-        }
-    }
-}
-
-pub async fn create_api_user(db: DbConn, create: CreateApiUser) -> Result<m::ApiUser> {
-    let col = m::ApiUser::coll(db);
-    let api_user: m::ApiUser = create.into();
-    col.insert_one(to_document(&api_user)?, None)
-        .await?
-        .inserted_id
-        .as_object_id()
-        .ok_or(Error::CreateError)?;
-    Ok(api_user)
+pub async fn create_api_user(db: DbConn, create: m::CreateApiUser) -> Result<m::ApiUser> {
+    m::ApiUser::insert(db, create).await
 }
 
 pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>> {
@@ -79,50 +43,15 @@ pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>>
         .transpose()?)
 }
 
-#[derive(Debug, Clone)]
-pub struct CreateJob {
-    pub game_id: GameId,
-    pub report_id: Option<ReportId>,
-    pub analysis_type: m::AnalysisType,
-    pub precedence: i32,
-}
-
-impl From<CreateJob> for m::Job {
-    fn from(job: CreateJob) -> m::Job {
-        m::Job {
-            _id: m::JobId(ObjectId::new()),
-            game_id: job.game_id,
-            report_id: job.report_id,
-            analysis_type: job.analysis_type,
-            precedence: job.precedence,
-            owner: None,
-            date_last_updated: Utc::now().into(),
-            is_complete: false
-        }
-    }
-}
-
-pub async fn insert_one_job(db: DbConn, job: CreateJob) -> Result<ObjectId> {
-    let job_col = m::Job::coll(db);
-    let job: m::Job = job.into();
-    Ok(job_col
-        .insert_one(to_document(&job)?, None)
-        .await?
-        .inserted_id
-        .as_object_id()
-        .ok_or(Error::CreateError)?
-        .clone())
-}
-
 pub fn insert_many_jobs<'a, T>(
     db: DbConn,
     jobs: &'a T,
-) -> impl Iterator<Item = impl Future<Output = Result<ObjectId>>> + 'a
+) -> impl Iterator<Item = impl Future<Output = Result<m::Job>>> + 'a
 where
-    T: Iterator<Item = &'a CreateJob> + Clone,
+    T: Iterator<Item = &'a m::CreateJob> + Clone,
 {
     jobs.clone()
-        .map(move |job| insert_one_job(db.clone(), job.clone()))
+        .map(move |job| m::Job::insert(db.clone(), job.clone()))
 }
 
 pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Job>> {

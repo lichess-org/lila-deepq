@@ -9,6 +9,7 @@ default-run = "lila-deepq"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait = "0.1.51"
 chrono = { version = "0.4", features = ["serde"] }
 clap = "2.33"
 derive_more = "0.99.11"

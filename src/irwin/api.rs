@@ -38,8 +38,8 @@ use crate::deepq::model::{
     Game, GameAnalysis, GameId, PlyAnalysis, Report, ReportOrigin, ReportType, Score, UserId,
 };
 use crate::error::{Error, Result};
-use crate::fishnet::api::{get_job, insert_many_jobs, CreateJob};
-use crate::fishnet::model::{AnalysisType, Job as FishnetJob, JobId};
+use crate::fishnet::api::{get_job, insert_many_jobs};
+use crate::fishnet::model::{AnalysisType, Job as FishnetJob, CreateJob, JobId};
 use crate::fishnet::FishnetMsg;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

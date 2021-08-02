@@ -1,4 +1,4 @@
-// Copyright 2020 Lakin Wecker
+// Copyright 2021 Lakin Wecker
 //
 // This file is part of lila-deepq.
 //
@@ -14,12 +14,23 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
+//
+//
+// Provide some simple cryptography related utilities. 
+//
+// These should always be wrappers around third party providers, we'll
+// never do the crypto ourselves, but this wraps up proper crypto in an interface
+// that we'll use often.
 
-pub mod crypto;
-pub mod db;
-pub mod deepq;
-pub mod error;
-pub mod fishnet;
-pub mod irwin;
-pub mod http;
-pub mod lichess;
+use std::iter;
+
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+
+pub fn random_alphanumeric_string(size: usize) -> String {
+    iter::repeat(())
+        .map(|()| thread_rng().sample(Alphanumeric))
+        .map(char::from)
+        .take(size)
+        .collect()
+}

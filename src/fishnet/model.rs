@@ -14,10 +14,8 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
-use std::str::FromStr;
-
 use chrono::prelude::*;
-use derive_more::{Display, From};
+use derive_more::{Display, From, Into};
 use futures::stream::{Stream, StreamExt};
 use log::warn;
 use mongodb::{
@@ -27,9 +25,10 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::db::DbConn;
+use crate::db::{ DbConn, Queryable };
 use crate::deepq::model::{GameId, UserId, ReportId};
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::crypto;
 
 #[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
 pub struct Key(pub String);
@@ -58,35 +57,60 @@ impl From<AnalysisType> for Bson {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, From, Into, Display)]
+pub struct ApiUserId(pub ObjectId);
+
+impl From<ApiUserId> for Bson {
+    fn from(i: ApiUserId) -> Bson {
+        Bson::ObjectId(i.0)
+    }
+}
+
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ApiUser {
-    pub _id: ObjectId,
+    pub _id: ApiUserId,
     pub key: Key,
     pub user: Option<UserId>,
     pub name: String,
     pub perms: Vec<AnalysisType>,
 }
 
-impl ApiUser {
-    pub fn coll(db: DbConn) -> Collection<Document> {
+#[derive(Debug, Clone)]
+pub struct CreateApiUser {
+    pub user: Option<UserId>,
+    pub name: String,
+    pub perms: Vec<AnalysisType>,
+}
+
+impl From<CreateApiUser> for ApiUser {
+    fn from(create_user: CreateApiUser) -> ApiUser {
+        ApiUser {
+            _id: ApiUserId(ObjectId::new()),
+            key: Key(crypto::random_alphanumeric_string(7)),
+            user: create_user.user,
+            name: create_user.name,
+            perms: create_user.perms,
+        }
+    }
+}
+
+impl Queryable for ApiUser {
+    type ID = ApiUserId;
+    type CreateRecord = CreateApiUser;
+    type Record = ApiUser;
+
+    fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_apiuser")
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, From, Display)]
+#[derive(Serialize, Deserialize, Debug, Clone, From, Into, Display)]
 pub struct JobId(pub ObjectId);
 
-impl From<JobId> for ObjectId {
-    fn from(ji: JobId) -> ObjectId {
-        ji.0
-    }
-}
-
-impl FromStr for JobId {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(JobId(ObjectId::parse_str(s)?))
+impl From<JobId> for Bson {
+    fn from(i: JobId) -> Bson {
+        Bson::ObjectId(i.0)
     }
 }
 
@@ -102,11 +126,40 @@ pub struct Job {
     pub is_complete: bool, // Denormalized cache of completion state.
 }
 
-impl Job {
-    pub fn coll(db: DbConn) -> Collection<Document> {
+#[derive(Debug, Clone)]
+pub struct CreateJob {
+    pub game_id: GameId,
+    pub report_id: Option<ReportId>,
+    pub analysis_type: AnalysisType,
+    pub precedence: i32,
+}
+
+impl From<CreateJob> for Job {
+    fn from(job: CreateJob) -> Job {
+        Job {
+            _id: JobId(ObjectId::new()),
+            game_id: job.game_id,
+            report_id: job.report_id,
+            analysis_type: job.analysis_type,
+            precedence: job.precedence,
+            owner: None,
+            date_last_updated: Utc::now().into(),
+            is_complete: false
+        }
+    }
+}
+
+impl Queryable for Job {
+    type ID = JobId;
+    type CreateRecord = CreateJob;
+    type Record = Job;
+
+    fn coll(db: DbConn) -> Collection<Document> {
         db.database.collection("deepq_fishnetjobs")
     }
+}
 
+impl Job {
     pub fn seconds_since_created(&self) -> i64 {
         (Utc::now().timestamp_millis() - self.date_last_updated.timestamp_millis())/1000_i64
     }

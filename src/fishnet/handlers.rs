@@ -14,12 +14,14 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
+use std::str::FromStr;
 
 use std::num::NonZeroU8;
 use std::result::Result as StdResult;
 use std::convert::{TryFrom, TryInto, Into};
 
 use log::{debug, info, error};
+use bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use serde_with::{
     serde_as, skip_serializing_none, DisplayFromStr, SpaceSeparator, StringWithSeparator,
@@ -352,6 +354,15 @@ fn _log_body() -> impl Filter<Extract = (), Error = Rejection> + Copy {
             println!("Request body: {:?}", b);
         })
         .untuple_one()
+}
+
+// Allow job ids to be parsed from path elements
+impl FromStr for m::JobId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(m::JobId(ObjectId::parse_str(s)?))
+    }
 }
 
 pub fn mount(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> BoxedFilter<(impl Reply,)> {

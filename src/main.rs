@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 
+pub mod crypto;
 pub mod db;
 pub mod deepq;
 pub mod error;
@@ -201,6 +202,8 @@ struct FishnetNewUser {
 }
 
 async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::error::Error>> {
+    let conn = db::connection(&args.database_opts.clone().into()).await?;
+
     let mut perms = Vec::new();
     if args.system_analysis {
         perms.push(fishnet::model::AnalysisType::SystemAnalysis);
@@ -211,13 +214,12 @@ async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::e
     if args.deep_analysis {
         perms.push(fishnet::model::AnalysisType::Deep);
     }
-    let create_user = fishnet::api::CreateApiUser {
+    let create_user = fishnet::model::CreateApiUser {
         user: Some(args.username.clone().into()),
         name: args.keyname.clone(),
         perms: perms,
     };
 
-    let conn = db::connection(&args.database_opts.clone().into()).await?;
     let api_user = fishnet::api::create_api_user(conn, create_user).await?;
     info!(
         "Created key {} for {{user: {:?}, name: {:?}}}",
