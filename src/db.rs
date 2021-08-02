@@ -89,8 +89,9 @@ pub trait Queryable {
     }
 
     // TODO: add more of the usually candidates for apis here:
-    // add: findOne -> Document - > Result<Option<Record>>
     // add: find -> Document - > Result<Vec<Record>>
+    //      ^ this one is proving a bit harder to implement.
+    //        will do it later.
     // add: find -> Filter - > Result<Vec<Record>>
     //              ^ This needs to be defined somehow
     // add: insert -> CreateRecord -> Result<Record>
