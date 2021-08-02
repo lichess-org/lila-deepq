@@ -218,10 +218,6 @@ impl Job {
         let options = FindOneOptions::builder()
             .sort(doc! { "date_last_updated": -1 })
             .build();
-        Ok(Job::coll(db.clone())
-            .find_one(filter, options)
-            .await?
-            .map(from_document::<Job>)
-            .transpose()?)
+        Job::find_one(db.clone(), filter, options).await
     }
 }

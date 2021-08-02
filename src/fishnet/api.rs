@@ -79,11 +79,8 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Res
 }
 
 pub async fn game_id_for_job_id(db: DbConn, id: m::JobId) -> Result<Option<GameId>> {
-    Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id.0}, None)
+    Ok(m::Job::find_one(db, doc! {"_id": id.0}, None)
         .await?
-        .map(from_document)
-        .transpose()?
         .map(|d: m::Job| d.game_id))
 }
 
@@ -106,19 +103,11 @@ pub async fn delete_job(db: DbConn, id: m::JobId) -> Result<()> {
 }
 
 pub async fn get_user_job(db: DbConn, id: m::JobId, user: m::ApiUser) -> Result<Option<m::Job>> {
-    Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id.0, "owner": user.key}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::Job::find_one(db, doc! {"_id": id.0, "owner": user.key}, None).await
 }
 
 pub async fn get_job(db: DbConn, id: m::JobId) -> Result<Option<m::Job>> {
-    Ok(m::Job::coll(db)
-        .find_one(doc! {"_id": id.0}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::Job::find_one(db, doc! {"_id": id.0}, None).await
 }
 
 #[derive(Serialize)]

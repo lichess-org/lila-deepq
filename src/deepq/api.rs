@@ -75,12 +75,7 @@ pub async fn atomically_update_sent_to_irwin(
 }
 
 pub async fn find_report(db: DbConn, id: m::ReportId) -> Result<Option<m::Report>> {
-    let reports_coll = m::Report::coll(db.clone());
-    Ok(reports_coll
-        .find_one(doc! {"_id": id.0}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::Report::find_one(db.clone(), doc! {"_id": id.0}, None).await
 }
 
 pub fn precedence_for_origin(origin: m::ReportOrigin) -> i32 {
@@ -150,12 +145,7 @@ where
 }
 
 pub async fn find_game(db: DbConn, game_id: m::GameId) -> Result<Option<m::Game>> {
-    let games_coll = m::Game::coll(db.clone());
-    Ok(games_coll
-        .find_one(doc! {"_id": game_id}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::Game::find_one(db.clone(), doc! {"_id": game_id}, None).await
 }
 
 #[derive(Debug, Clone)]
@@ -202,10 +192,5 @@ pub async fn upsert_one_game_analysis(
 }
 
 pub async fn find_analysis_for_job(db: DbConn, job_id: JobId) -> Result<Option<m::GameAnalysis>> {
-    let analysis_coll = m::GameAnalysis::coll(db.clone());
-    Ok(analysis_coll
-        .find_one(doc! {"job_id": job_id.0}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::GameAnalysis::find_one(db.clone(), doc! {"job_id": job_id.0}, None).await
 }
