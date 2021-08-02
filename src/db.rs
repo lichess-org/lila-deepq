@@ -25,6 +25,7 @@ use serde::Serialize;
 use mongodb::{
     bson::{Bson, doc, from_document, to_document, Document},
     Client, Collection, Database,
+    options::FindOneOptions,
 };
 
 use crate::error::{Error, Result};
@@ -70,6 +71,18 @@ pub trait Queryable {
         let filter = doc! { "_id": { "$eq": id.into() } };
         Ok(Self::coll(db.clone())
             .find_one(filter, None)
+            .await?
+            .map(from_document)
+            .transpose()?)
+    }
+
+    async fn find_one<F, O>(db:DbConn, filter: F, options: O)
+        -> Result<Option<Self::Record>>
+        where F: Into<Option<Document>> + Send,
+              O: Into<Option<FindOneOptions>>  + Send
+    {
+        Ok(Self::coll(db)
+            .find_one(filter, options)
             .await?
             .map(from_document)
             .transpose()?)

@@ -35,12 +35,7 @@ pub async fn create_api_user(db: DbConn, create: m::CreateApiUser) -> Result<m::
 }
 
 pub async fn get_api_user(db: DbConn, key: m::Key) -> Result<Option<m::ApiUser>> {
-    let col = m::ApiUser::coll(db);
-    Ok(col
-        .find_one(doc! {"key": key.0.clone()}, None)
-        .await?
-        .map(from_document)
-        .transpose()?)
+    m::ApiUser::find_one(db, doc! {"key": key.0.clone()}, None).await
 }
 
 pub fn insert_many_jobs<'a, T>(
