@@ -49,7 +49,7 @@ impl Actor {
     }
 
     pub fn handlers(&self, db: DbConn) -> BoxedFilter<(impl Reply,)> { 
-        handlers::mount(db.clone(), self.tx.clone())
+        handlers::mount(db, self.tx.clone())
     }
 }
 

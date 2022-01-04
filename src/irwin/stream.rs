@@ -48,10 +48,11 @@ impl FromStr for Msg {
     type Err = Error;
 
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        Ok(serde_json::from_str(&s)?)
+        Ok(serde_json::from_str(s)?)
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 pub async fn listener(url: &str, api_key: &str) -> Result<impl Stream<Item = Result<Msg>>> {
     let client = reqwest::Client::builder()
         .tcp_keepalive(Duration::from_millis(1000))

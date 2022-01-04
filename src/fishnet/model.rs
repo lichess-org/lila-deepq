@@ -178,7 +178,7 @@ impl Job {
     ) -> Result<impl Stream<Item = Result<Job>>> {
         let p = "Job::find_by_report >";
         let filter = doc! {
-            "report_id": { "$eq": report_id.0.clone() }
+            "report_id": { "$eq": report_id.0 }
         };
         Ok(Job::coll(db.clone())
             .find(filter, None)

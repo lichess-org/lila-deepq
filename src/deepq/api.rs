@@ -20,7 +20,7 @@ use futures::future::Future;
 use log::debug;
 use mongodb::{
     bson::{doc, from_document, oid::ObjectId, to_document},
-    options::{UpdateModifications, UpdateOptions},
+    options::UpdateOptions,
 };
 use shakmaty::{fen::Fen, uci::Uci};
 
@@ -66,7 +66,7 @@ pub async fn atomically_update_sent_to_irwin(
     Ok(m::Report::coll(db)
         .find_one_and_update(
             doc! {"_id": {"$eq": id.0}, "sent_to_irwin": { "$eq": false }},
-            UpdateModifications::Document(doc! {"$set": { "sent_to_irwin": true }}),
+            doc! {"$set": { "sent_to_irwin": true }},
             None,
         )
         .await?
@@ -125,7 +125,7 @@ pub async fn insert_one_game(db: DbConn, game: CreateGame) -> Result<m::GameId> 
     let result = games_coll
         .update_one(
             doc! { "_id": { "$eq": game._id.clone() } },
-            doc! { "$set":  to_document(&game)? },
+            doc! { "$set": to_document(&game)? },
             Some(UpdateOptions::builder().upsert(true).build()),
         )
         .await?;
@@ -183,7 +183,7 @@ pub async fn upsert_one_game_analysis(
     let result = analysis_coll
         .update_one(
             doc! { "_id": analysis._id.clone().0 },
-            to_document(&analysis)?,
+            doc! { "$set": to_document(&analysis)? },
             Some(UpdateOptions::builder().upsert(true).build()),
         )
         .await?;

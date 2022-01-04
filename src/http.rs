@@ -53,7 +53,7 @@ where
     filter.and_then(move |v: Option<V>| async move { v.ok_or_else(err) })
 }
 
-pub fn required_or_unauthenticated<'a, T>(
+pub fn required_or_unauthenticated<T>(
     o: Option<T>,
 ) -> impl Future<Output = StdResult<T, Rejection>> {
     if let Some(t) = o {
@@ -62,7 +62,7 @@ pub fn required_or_unauthenticated<'a, T>(
     future::err(unauthenticated())
 }
 
-pub fn required_or_forbidden<'a, T>(o: Option<T>) -> impl Future<Output = StdResult<T, Rejection>> {
+pub fn required_or_forbidden<T>(o: Option<T>) -> impl Future<Output = StdResult<T, Rejection>> {
     if let Some(t) = o {
         return future::ok(t);
     }

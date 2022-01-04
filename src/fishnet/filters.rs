@@ -132,7 +132,7 @@ pub fn authentication_from_header(
     db: DbConn,
 ) -> impl Filter<Extract = (Option<m::ApiUser>,), Error = Infallible> + Clone {
     warp::any()
-        .and(api_user_from_header(db.clone()))
+        .and(api_user_from_header(db))
         .or(no_api_user())
         .unify()
 }
@@ -144,7 +144,7 @@ where
     T: Into<m::Key> + Clone + Send + Sync + DeserializeOwned,
 {
     warp::any()
-        .and(with(db.clone()))
+        .and(with(db))
         .and(warp::body::json::<T>())
         .and_then(authorize::<T>)
 }

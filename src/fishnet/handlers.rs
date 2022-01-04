@@ -215,7 +215,6 @@ async fn acquire_job(
     api_user: f::Authorized<m::ApiUser>,
 ) -> StdResult<Option<Job>, Rejection> {
     let api_user = api_user.val();
-    info!("acquire_job > {}", api_user.name);
     // TODO: Multiple active jobs are allowed. Instead we should unassign old ones that
     //       are not finished.
     // NOTE: not using .map because of unstable async lambdas
@@ -226,7 +225,7 @@ async fn acquire_job(
             let game = match find_game(db.clone(), job.game_id.clone()).await {
                 Ok(game) => Ok(game),
                 Err(err) => {
-                    api::unassign_job(db.clone(), api_user, job._id.clone()).await?;
+                    api::unassign_job(db.clone(), api_user.clone(), job._id.clone()).await?;
                     Err(err)
                 }
             }?;
@@ -251,11 +250,12 @@ async fn acquire_job(
                         work: WorkInfo {
                             id: job._id.to_string(),
                             _type: WorkType::Analysis,
-                            nodes: nodes_for_job(&job).try_into()?,
+                            nodes: nodes_for_job(&job),
                             multipv: multipv_for_job(&job),
                             depth: depth_for_job(&job),
                         },
                     };
+                    info!("acquire_job > {} > {}", api_user.name, job.game_id);
                     Some(job)
                 }
             }
@@ -271,7 +271,7 @@ async fn abort_job(
     job_id: m::JobId,
 ) -> StdResult<Option<()>, Rejection> {
     let api_user = api_user.val();
-    info!("abort_job > {}", api_user.name);
+    info!("abort_job > {} > {}", api_user.name, job_id.clone().to_string());
     api::unassign_job(db.clone(), api_user, job_id.clone()).await?;
     send(tx, FishnetMsg::JobAborted(job_id));
     Ok(None) // None because we're going to return no-content
@@ -289,14 +289,14 @@ async fn save_job_analysis(
     let api_user = api_user.val();
     info!("save_job_analysis > {:?} > {:?}", api_user.name, job_id);
 
-    let job = api::get_user_job(db.clone(), job_id.clone().into(), api_user.clone())
+    let job = api::get_user_job(db.clone(), job_id.clone(), api_user.clone())
         .await?
-        .ok_or(reject::not_found())?;
+        .ok_or_else(reject::not_found)?;
     debug!("save_job_analysis > get_user_job > success");
 
     let analysis = UpdateGameAnalysis {
-        job_id: job_id.into(),
-        game_id: job.clone().game_id.into(),
+        job_id,
+        game_id: job.clone().game_id,
         analysis: report.analysis.clone(),
         source_id: UserId(api_user._id.to_string()),
         requested_pvs: multipv_for_job(&job).map(|v| i32::from(v.get())),
@@ -367,11 +367,11 @@ impl FromStr for m::JobId {
 
 pub fn mount(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> BoxedFilter<(impl Reply,)> {
     let authenticated = f::api_user_from_header(db.clone());
-    let authentication_required = authenticated.clone().and_then(required_or_unauthenticated);
+    let authentication_required = authenticated.and_then(required_or_unauthenticated);
 
     let header_authorization_required = warp::any()
         .and(with(db.clone()))
-        .and(authentication_required.clone())
+        .and(authentication_required)
         .and_then(f::authorize);
 
     // NOTE: this supports the old fishnet 1.x style of authorization
@@ -402,8 +402,8 @@ pub fn mount(db: DbConn, tx: broadcast::Sender<FishnetMsg>) -> BoxedFilter<(impl
     let analysis = path("analysis")
         .and(method::post())
         .and(with(db.clone()))
-        .and(with(tx.clone()))
-        .and(header_authorization_required.clone())
+        .and(with(tx))
+        .and(header_authorization_required)
         .and(path::param())
         .and(warp::body::json())
         .and_then(save_job_analysis)

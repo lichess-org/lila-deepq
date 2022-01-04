@@ -26,6 +26,7 @@ use futures::{future::try_join_all, stream::StreamExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, SpaceSeparator, StringWithSeparator};
+use serde_json;
 use shakmaty::{san::San, uci::Uci, CastlingMode, Chess, Position};
 use tokio::sync::broadcast::{self, error::RecvError};
 
@@ -65,7 +66,7 @@ pub struct RequestGame {
     pub analysis: Option<Vec<Score>>,
 }
 
-fn uci_from_san(pgn: &Vec<San>) -> Result<Vec<Uci>> {
+fn uci_from_san(pgn: &[San]) -> Result<Vec<Uci>> {
     let mut pos = Chess::default();
     let mut ret_val = Vec::new();
     for san in pgn.iter() {
@@ -128,16 +129,19 @@ impl From<Request> for Vec<CreateJob> {
 }
 
 pub async fn add_to_queue(db: DbConn, request: Request) -> Result<()> {
+    let p = "irwin_add_to_queue >";
     let games_with_uci = request
         .games
         .iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<CreateGame>>>()?;
+    debug!("{} try insert_many_games({})", p, request.games.len());
     try_join_all(insert_many_games(
         db.clone(),
         games_with_uci.iter().cloned(),
     ))
     .await?;
+    debug!("done");
 
     let report_id = insert_one_report(db.clone(), request.clone().into()).await?;
 
@@ -172,20 +176,31 @@ pub struct IrwinOpts {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct EngineEval {
     // TODO: Don't know if this is large enough or too large
-    cp: Option<u32>,
-    mate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cp: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mate: Option<i64>,
+}
+
+impl EngineEval {
+    pub fn flip(&self) -> EngineEval {
+        EngineEval{
+            cp: self.cp.map(|cp| -cp),
+            mate: self.mate.map(|mate| -mate)
+        }
+    }
 }
 
 impl From<Score> for EngineEval {
     fn from(s: Score) -> EngineEval {
         match s {
             Score::Cp(cp) => EngineEval {
-                cp: Some(cp as u32),
+                cp: Some(cp as i64),
                 mate: None,
             },
             Score::Mate(m) => EngineEval {
                 cp: None,
-                mate: Some(m as u32),
+                mate: Some(m as i64),
             },
         }
     }
@@ -199,7 +214,7 @@ struct Analysis {
 }
 
 impl Analysis {
-    fn from_ply_analysis(uci: &Uci, ply_analysis: &PlyAnalysis) -> Result<Analysis> {
+    fn from_ply_analysis(uci: &Uci, ply_analysis: &PlyAnalysis, flip: bool) -> Result<Analysis> {
         match ply_analysis {
             PlyAnalysis::Best(m) => Ok(Analysis {
                 uci: uci.to_string(),
@@ -209,15 +224,17 @@ impl Analysis {
                 match m
                     .score
                     .iter()
-                    .filter(|d| d.iter().flatten().count() > 0)
-                    .last()
-                    .map(|pvs| pvs.iter().flatten().last())
+                    .find(|d| d.iter().flatten().count() > 0)
+                    .map(|pvs| pvs.iter().flatten().last()) // but the last depth.
                     .flatten()
                 {
-                    Some(s) => Ok(Analysis {
-                        uci: uci.to_string(),
-                        engine_eval: s.clone().into(),
-                    }),
+                    Some(s) => {
+                        let engine_eval: EngineEval = s.clone().into();
+                        Ok(Analysis {
+                            uci: uci.to_string(),
+                            engine_eval: if flip { engine_eval.flip() } else { engine_eval },
+                        })
+                    },
                     None => Err(Error::IncompleteIrwinAnalysis),
                 }
             }
@@ -234,25 +251,38 @@ struct AnalyzedPosition {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct IrwinGame {
+    #[serde(rename = "_id")]
     id: String,
     white: String,
     black: String,
     pgn: Vec<String>,
-    emt: Option<Vec<i32>>,
+    emts: Option<Vec<i32>>,
     analysis: Option<Vec<EngineEval>>,
+    analysed: bool
 }
 
-impl From<Game> for IrwinGame {
-    fn from(game: Game) -> IrwinGame {
-        let game = game.clone();
-        IrwinGame {
-            id: game._id.0,
-            white: game.white.map(|p| p.0).unwrap_or("Unknown (white)".into()),
-            black: game.black.map(|p| p.0).unwrap_or("Unknown (white)".into()),
-            pgn: game.pgn.iter().map(|uci| uci.to_string()).collect(),
-            emt: Some(game.emts),
-            analysis: None,
+impl TryFrom<Game> for IrwinGame {
+    type Error = Error;
+
+    fn try_from(game: Game) -> StdResult<IrwinGame, Self::Error> {
+        let game = game;
+
+        let mut sans: Vec<String> = Vec::new();
+        let mut pos = Chess::default();
+        for uci in game.clone().pgn {
+            let m = uci.to_move(&pos.clone())?;
+            pos = pos.play(&m)?;
+            sans.push(San::from_move(&pos, &m).to_string());
         }
+        Ok(IrwinGame {
+            id: game._id.0,
+            white: game.white.map(|p| p.0).unwrap_or_else(|| "Unknown (white)".into()),
+            black: game.black.map(|p| p.0).unwrap_or_else(|| "Unknown (black)".into()),
+            pgn: sans,
+            emts: Some(game.emts),
+            analysis: None,
+            analysed: false
+        })
     }
 }
 
@@ -261,7 +291,7 @@ struct IrwinJob {
     #[serde(rename = "playerId")]
     player_id: String, // The zobrist hash
     games: Vec<IrwinGame>,
-    #[serde(rename = "analyzedPositions")]
+    #[serde(rename = "analysedPositions")]
     analyzed_positions: Vec<AnalyzedPosition>,
 }
 
@@ -282,39 +312,38 @@ async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
         .filter_map(ok_or_warn)
         .collect()
         .await;
-    debug!("{} got fishnet job", p);
+    info!("{} got fishnet job", p);
     // TODO: Theoretically we might have more than one analysis
     //       per game from the way the database structure is setup.
     //       I believe that the code is organized in such a way that
     //       this will not be possible _right_ now, but something to
     //       keep in mind.
-    let analyzed_games: Vec<GameAnalysis> =
-        GameAnalysis::find_by_jobs(db.clone(), jobs.iter().map(|j| j._id.clone()).collect())
-            .await?
-            .filter_map(ok_or_warn)
-            .collect()
-            .await;
-    debug!("{} got analysis", p);
+    let analyzed_games = GameAnalysis::find_by_jobs(db.clone(), jobs.iter().map(|j| j._id.clone()).collect())
+            .await?;
+    let analyzed_games = analyzed_games
+            .filter_map(ok_or_warn);
+    let analyzed_games = analyzed_games.collect();
+    let analyzed_games: Vec<GameAnalysis> = analyzed_games.await;
+    info!("{} got analysis", p);
     let mut games: Vec<IrwinGame> = Vec::new();
-    let analyzed_positions: Vec<AnalyzedPosition> = Vec::new();
     for game_analysis in analyzed_games {
         let game = game_analysis.game(db.clone()).await?;
 
         let mut pos = Chess::default();
         match game {
-            None => debug!(
+            None => info!(
                 "{} skipping game id {} because we can't find it in the database",
                 p, game_analysis.game_id
             ),
             Some(game) => {
-                let mut irwin_game: IrwinGame = game.clone().into();
+                let mut irwin_game: IrwinGame = game.clone().try_into()?;
                 let mut irwin_evals: Vec<EngineEval> = Vec::new();
 
-                for (uci, analysis) in game.pgn.iter().zip(game_analysis.analysis.iter()) {
+                for (num, (uci, analysis)) in game.pgn.iter().zip(game_analysis.analysis.iter()).enumerate() {
                     match analysis {
                         Some(analysis) => {
                             irwin_evals
-                                .push(Analysis::from_ply_analysis(uci, &analysis)?.engine_eval);
+                                .push(Analysis::from_ply_analysis(uci, analysis, num%2==1)?.engine_eval);
                             let m = uci.to_move(&pos.clone())?;
                             pos = pos.play(&m)?;
                         }
@@ -322,23 +351,24 @@ async fn irwin_job_from_report(db: DbConn, report: Report) -> Result<IrwinJob> {
                         // https://github.com/niklasf/shakmaty/issues/40
                         // and https://github.com/niklasf/shakmaty/pull/45
                         None => {
-                            return Err(Error::IncompleteIrwinAnalysis)?;
+                            return Err(Error::IncompleteIrwinAnalysis);
                         }
                     }
                 }
                 irwin_game.analysis = Some(irwin_evals);
+                irwin_game.analysed = true;
                 games.push(irwin_game);
             }
         }
     }
 
-    debug!("{} got games", p);
+    info!("{} got games", p);
 
-    debug!("{} returning irwin job", p);
+    info!("{} returning irwin job", p);
     Ok(IrwinJob {
         player_id: report.user_id.0,
-        games: games,
-        analyzed_positions: analyzed_positions,
+        games,
+        analyzed_positions: Vec::new(), // Irwin doesn't seem to use this. So empty it is.
     })
 }
 
@@ -354,7 +384,7 @@ async fn handle_job_aborted(_db: DbConn, _opts: IrwinOpts, job_id: JobId) {
 
 async fn handle_job_completed(db: DbConn, opts: IrwinOpts, job_id: JobId) {
     let p = "handle_job_completed >";
-    match get_job(db.clone(), job_id.clone().into()).await {
+    match get_job(db.clone(), job_id.clone()).await {
         Err(err) => {
             error!(
                 "{} Unable find job for {:?}. Error: {:?}",
@@ -428,7 +458,7 @@ async fn report_complete_percentage(db: DbConn, report: Report) -> Result<f64> {
     Ok(complete / (complete + incomplete))
 }
 
-async fn update_report_completeness(db: DbConn, opts: IrwinOpts, report: Report) -> Result<()> {
+async fn update_report_completeness(db: DbConn, _opts: IrwinOpts, report: Report) -> Result<()> {
     let p = "update_report_completeness";
     let percentage = report_complete_percentage(db.clone(), report.clone()).await?;
     if percentage >= 1f64 {
@@ -440,7 +470,14 @@ async fn update_report_completeness(db: DbConn, opts: IrwinOpts, report: Report)
                 &p, updated_report._id
             );
 
+            info!("1");
             let irwin_job: IrwinJob = irwin_job_from_report(db.clone(), report).await?;
+            info!("2");
+            let j = serde_json::to_string(&irwin_job)?;
+            info!("3");
+            info!("{}", j);
+            info!("4");
+
             // TODO: do something with this job?
         } else {
             info!(

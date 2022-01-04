@@ -16,16 +16,17 @@
 // along with lila-deepq.  If not, see <https://www.gnu.org/licenses/>.
 //
 //
-use futures::future::Future;
 use std::convert::TryInto;
 
-use mongodb::bson::{
-    doc, from_document, Bson,
-};
-use mongodb::options::{FindOneAndUpdateOptions, UpdateModifications};
+use chrono::prelude::*;
+use chrono::Duration;
+use futures::future::Future;
+
+use mongodb::bson::{doc, from_document, Bson};
+use mongodb::options::FindOneAndUpdateOptions;
 use serde::Serialize;
 
-use crate::db::{ DbConn, Queryable };
+use crate::db::{DbConn, Queryable};
 use crate::deepq::model::GameId;
 use crate::error::Result;
 use crate::fishnet::model as m;
@@ -51,13 +52,24 @@ where
 
 pub async fn assign_job(db: DbConn, api_user: m::ApiUser) -> Result<Option<m::Job>> {
     let job_col = m::Job::coll(db);
+    let cutoff = Utc::now() - Duration::minutes(10);
+    // TODO: include previously assigned, too old but not completed ones here.
     Ok(job_col
         .find_one_and_update(
             doc! {
-                "owner": Bson::Null,
+                "$or": [
+                    {"owner": Bson::Null},
+                    {
+                        "$and": [
+                            {"owner": api_user.key.clone()},
+                            {"date_last_updated": { "$lt": cutoff }},
+                            {"is_complete": false},
+                        ]
+                    }
+                ],
                 "analysis_type": doc!{ "$in": Bson::Array(api_user.perms.iter().map(Into::into).collect()) },
             },
-            UpdateModifications::Document(doc! {"$set": {"owner": api_user.key.clone()}}),
+            doc! {"$set": {"owner": api_user.key.clone(), "date_last_updated": Utc::now()}},
             FindOneAndUpdateOptions::builder()
                 .sort(doc! {"precedence": -1, "date_last_updated": 1})
                 .build(),
@@ -71,7 +83,7 @@ pub async fn unassign_job(db: DbConn, api_user: m::ApiUser, id: m::JobId) -> Res
     m::Job::coll(db)
         .update_one(
             doc! { "_id": id.0, "owner": api_user.key.clone() },
-            UpdateModifications::Document(doc! {"owner": Bson::Null}),
+            doc! {"$set": {"owner": Bson::Null, "date_last_updated": Utc::now()} },
             None,
         )
         .await?;
@@ -87,8 +99,8 @@ pub async fn game_id_for_job_id(db: DbConn, id: m::JobId) -> Result<Option<GameI
 pub async fn set_complete(db: DbConn, id: m::JobId) -> Result<()> {
     m::Job::coll(db)
         .update_one(
-            doc! {"_id": {"$eq": id.0}},
-            UpdateModifications::Document(doc! {"$set": { "is_complete": true }}),
+            doc! { "_id": {"$eq": id.0}},
+            doc! {"$set": { "is_complete": true, "date_last_updated": Utc::now() }},
             None,
         )
         .await?;
@@ -118,10 +130,8 @@ pub struct QStatus {
 }
 
 pub async fn q_status(db: DbConn, analysis_type: m::AnalysisType) -> Result<QStatus> {
-    let acquired = m::Job::acquired_jobs(db.clone(), analysis_type.clone())
-        .await?;
-    let queued = m::Job::queued_jobs(db.clone(), analysis_type.clone())
-        .await?;
+    let acquired = m::Job::acquired_jobs(db.clone(), analysis_type.clone()).await?;
+    let queued = m::Job::queued_jobs(db.clone(), analysis_type.clone()).await?;
     let oldest = m::Job::oldest_job(db.clone(), analysis_type.clone())
         .await?
         .map(|job| job.seconds_since_created())

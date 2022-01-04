@@ -217,12 +217,12 @@ async fn fishnet_new_user(args: &FishnetNewUser) -> StdResult<(), Box<dyn std::e
     let create_user = fishnet::model::CreateApiUser {
         user: Some(args.username.clone().into()),
         name: args.keyname.clone(),
-        perms: perms,
+        perms,
     };
 
     let api_user = fishnet::api::create_api_user(conn, create_user).await?;
     info!(
-        "Created key {} for {{user: {:?}, name: {:?}}}",
+       "Created key {} for {{user: {:?}, name: {:?}}}",
         api_user.key.0, api_user.user, api_user.name
     );
     Ok(())
